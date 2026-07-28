@@ -8,6 +8,9 @@ import {
 	spyOn,
 	test,
 } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Adapter } from "../../src/acp/adapter";
 import { AgyAcpAgent } from "../../src/acp/agent";
 import { SessionManager } from "../../src/acp/sessions";
@@ -18,8 +21,11 @@ const _PLAN_MODE_ID = "plan";
 describe("AgyAcpAgent", () => {
 	let agent: AgyAcpAgent;
 	let clientMock: any;
+	let lockDir: string;
 
 	beforeEach(() => {
+		lockDir = mkdtempSync(join(tmpdir(), "agy-acp-agent-lock-"));
+		process.env.AGY_ACP_LOCK_FILE = join(lockDir, "agy.lock");
 		clientMock = { update: mock(async () => {}) };
 
 		// Mock SessionManager
@@ -60,6 +66,8 @@ describe("AgyAcpAgent", () => {
 
 	afterEach(() => {
 		mock.restore();
+		delete process.env.AGY_ACP_LOCK_FILE;
+		rmSync(lockDir, { recursive: true, force: true });
 	});
 
 	test("initialize returns capabilities", async () => {
@@ -118,6 +126,73 @@ describe("AgyAcpAgent", () => {
 			clientMock,
 		);
 		expect(res.stopReason).toBe("end_turn");
+	});
+
+	test("first prompt waits for startup model discovery", async () => {
+		let finishDiscovery: (exitCode: number) => void = () => {};
+		const discoveryExited = new Promise<number>((resolve) => {
+			finishDiscovery = resolve;
+		});
+		spyOn(Bun, "spawn").mockReturnValue({
+			stdout: "gemini-3.6-flash-high\n",
+			exited: discoveryExited,
+		} as any);
+
+		const testAgent = new AgyAcpAgent({
+			binary: "agy",
+			workingDir: process.cwd(),
+			conversationsDir: "/tmp",
+			skipNarration: false,
+			version: "test",
+		});
+		const prompt = testAgent.prompt(
+			{ sessionId: "s1", prompt: [{ type: "text", text: "hello" }] } as any,
+			clientMock,
+		);
+
+		const stateBeforeDiscovery = await Promise.race([
+			prompt.then(() => "completed"),
+			Bun.sleep(10).then(() => "waiting"),
+		]);
+		expect(stateBeforeDiscovery).toBe("waiting");
+
+		finishDiscovery(0);
+		await expect(prompt).resolves.toEqual({ stopReason: "end_turn" });
+	});
+
+	test("cancellation during model discovery does not start a prompt", async () => {
+		let finishDiscovery: (exitCode: number) => void = () => {};
+		const discoveryExited = new Promise<number>((resolve) => {
+			finishDiscovery = resolve;
+		});
+		spyOn(Bun, "spawn").mockReturnValue({
+			stdout: "gemini-3.6-flash-high\n",
+			exited: discoveryExited,
+		} as any);
+		const runPromptSpy = spyOn(Adapter.prototype, "runPrompt");
+		const testAgent = new AgyAcpAgent({
+			binary: "agy",
+			workingDir: process.cwd(),
+			conversationsDir: "/tmp",
+			skipNarration: false,
+			version: "test",
+		});
+
+		const prompt = testAgent.prompt(
+			{ sessionId: "s1", prompt: [{ type: "text", text: "hello" }] } as any,
+			clientMock,
+		);
+		testAgent.cancel({ sessionId: "s1" });
+
+		const stateAfterCancel = await Promise.race([
+			prompt.then((result) => result.stopReason),
+			Bun.sleep(10).then(() => "waiting"),
+		]);
+		expect(stateAfterCancel).toBe("cancelled");
+		expect(runPromptSpy).not.toHaveBeenCalled();
+
+		finishDiscovery(0);
+		await Promise.resolve();
 	});
 
 	test("prompt formats ACP blocks into XML strings", async () => {

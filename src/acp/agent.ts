@@ -51,13 +51,39 @@ interface ConfigResult {
 	configOptions: SessionConfigOption[];
 }
 
+function waitUnlessCancelled(
+	promise: Promise<void>,
+	signal: AbortSignal,
+): Promise<boolean> {
+	if (signal.aborted) return Promise.resolve(false);
+	return new Promise((resolve, reject) => {
+		const onAbort = () => {
+			signal.removeEventListener("abort", onAbort);
+			resolve(false);
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+		void promise.then(
+			() => {
+				signal.removeEventListener("abort", onAbort);
+				resolve(true);
+			},
+			(error: unknown) => {
+				signal.removeEventListener("abort", onAbort);
+				reject(error);
+			},
+		);
+	});
+}
+
 export class AgyAcpAgent {
 	private readonly sessions: SessionManager;
 	private readonly adapter: Adapter;
 	private readonly replayCache = new ReplayCache();
 	private availableModels: string[] = [];
+	private readonly modelDiscovery: Promise<void>;
 	// Tracks which AcpClient is serving each session so async updates can be pushed.
 	private readonly activeClients = new Map<string, AcpClient>();
+	private readonly promptControllers = new Map<string, AbortController>();
 
 	constructor(private readonly config: AgentConfig) {
 		this.sessions = new SessionManager(new SessionStore());
@@ -81,7 +107,7 @@ export class AgyAcpAgent {
 
 		// Kick off model discovery in the background; update cache and push
 		// config_option_update to all active sessions if the list changes.
-		discoverModels(config.binary).then((models) => {
+		this.modelDiscovery = discoverModels(config.binary).then((models) => {
 			const changed =
 				JSON.stringify(models) !== JSON.stringify(this.availableModels);
 			if (changed && models.length > 0) {
@@ -251,6 +277,7 @@ export class AgyAcpAgent {
 	closeSession(params: { sessionId?: string }): CloseSessionResponse {
 		const sessionId = params.sessionId;
 		if (sessionId) {
+			this.promptControllers.get(sessionId)?.abort();
 			this.adapter.cancel(sessionId);
 			this.sessions.evict(sessionId);
 			this.activeClients.delete(sessionId);
@@ -263,43 +290,60 @@ export class AgyAcpAgent {
 		client: AcpClient,
 	): Promise<PromptResponse> {
 		const sessionId = this.requireSessionId(params.sessionId);
+		const controller = new AbortController();
+		this.promptControllers.set(sessionId, controller);
 
-		let session = await this.sessions.ensure(sessionId);
-		if (!session) {
-			// Unknown session: create a fresh binding so prompts still work.
-			session = newSession(this.config.workingDir);
-			this.sessions.adopt(sessionId, session);
+		try {
+			let session = await this.sessions.ensure(sessionId);
+			if (!session) {
+				// Unknown session: create a fresh binding so prompts still work.
+				session = newSession(this.config.workingDir);
+				this.sessions.adopt(sessionId, session);
+			}
+
+			const rawText = promptText(params.prompt);
+			const text =
+				session.permissionMode === PLAN_MODE_ID
+					? PLAN_MODE_INJECTION + rawText
+					: rawText;
+			if (
+				!(await waitUnlessCancelled(this.modelDiscovery, controller.signal))
+			) {
+				return { stopReason: "cancelled" };
+			}
+			const outcome = await this.adapter.runPrompt(
+				sessionId,
+				session,
+				text,
+				client,
+				controller.signal,
+			);
+
+			if (outcome.error)
+				throw RequestError.internalError(undefined, outcome.error);
+
+			if (session.conversationId === null) {
+				session.conversationId = outcome.conversationId;
+			}
+			if (outcome.conversationId !== null) {
+				session.lastStepIdx = outcome.lastStepIdx;
+				session.updatedAt = new Date().toISOString();
+				await this.sessions.persist(sessionId, session);
+			}
+
+			return { stopReason: outcome.stopReason };
+		} finally {
+			if (this.promptControllers.get(sessionId) === controller) {
+				this.promptControllers.delete(sessionId);
+			}
 		}
-
-		const rawText = promptText(params.prompt);
-		const text =
-			session.permissionMode === PLAN_MODE_ID
-				? PLAN_MODE_INJECTION + rawText
-				: rawText;
-		const outcome = await this.adapter.runPrompt(
-			sessionId,
-			session,
-			text,
-			client,
-		);
-
-		if (outcome.error)
-			throw RequestError.internalError(undefined, outcome.error);
-
-		if (session.conversationId === null) {
-			session.conversationId = outcome.conversationId;
-		}
-		if (outcome.conversationId !== null) {
-			session.lastStepIdx = outcome.lastStepIdx;
-			session.updatedAt = new Date().toISOString();
-			await this.sessions.persist(sessionId, session);
-		}
-
-		return { stopReason: outcome.stopReason };
 	}
 
 	cancel(params: { sessionId?: string }): void {
-		if (params.sessionId) this.adapter.cancel(params.sessionId);
+		if (params.sessionId) {
+			this.promptControllers.get(params.sessionId)?.abort();
+			this.adapter.cancel(params.sessionId);
+		}
 	}
 
 	/** SDK-native config setter (session/set_config_option). */

@@ -2,7 +2,13 @@
 // the client, and finalize. Bridges the agy subprocess and the conversation
 // streaming layer.
 
-import { buildAgyArgs, extraArgsFromEnv, spawnAgy } from "../agy/process";
+import {
+	AgyProcessCancelledError,
+	type AgySubprocess,
+	buildAgyArgs,
+	extraArgsFromEnv,
+	spawnAgy,
+} from "../agy/process";
 import { POLL_INTERVAL_MS } from "../constants";
 import { conversationSnapshot } from "../conversation/scan";
 import { StreamPoller } from "../conversation/streaming";
@@ -28,14 +34,12 @@ export interface AdapterConfig {
 }
 
 export class Adapter {
-	private readonly children = new Map<string, Bun.Subprocess>();
-	private readonly cancelled = new Set<string>();
+	private readonly children = new Map<string, AgySubprocess>();
 
 	constructor(private readonly config: AdapterConfig) {}
 
 	/** Request cancellation of an in-flight prompt for a session. */
 	cancel(sessionId: string): void {
-		this.cancelled.add(sessionId);
 		const child = this.children.get(sessionId);
 		if (child) {
 			// SIGINT allows agy to flush its DB before exiting; on Windows we fall
@@ -54,17 +58,23 @@ export class Adapter {
 		session: Session,
 		promptText: string,
 		client: AcpClient,
+		signal?: AbortSignal,
 	): Promise<PromptOutcome> {
-		this.cancelled.delete(sessionId);
+		if (signal?.aborted) {
+			return {
+				stopReason: "cancelled",
+				conversationId: session.conversationId,
+				lastStepIdx: session.lastStepIdx,
+				hadUpdates: false,
+			};
+		}
 
 		// Use the session's cwd if set, otherwise fall back to the server's workingDir.
 		const effectiveCwd = session.cwd || this.config.workingDir;
 
-		// Snapshot existing conversations so we can bind the new DB agy creates.
-		const snapshot =
-			session.conversationId === null
-				? conversationSnapshot(this.config.conversationsDir)
-				: null;
+		// Snapshot existing conversations while this prompt owns the global agy
+		// process lock, immediately before the child starts.
+		let snapshot: Set<string> | null = null;
 
 		const args = buildAgyArgs({
 			workingDir: effectiveCwd,
@@ -76,10 +86,28 @@ export class Adapter {
 			extraArgs: extraArgsFromEnv(),
 		});
 
-		let child: Bun.Subprocess;
+		let child: AgySubprocess;
 		try {
-			child = spawnAgy(this.config.binary, args, effectiveCwd);
+			child = await spawnAgy(
+				this.config.binary,
+				args,
+				effectiveCwd,
+				signal,
+				() => {
+					if (session.conversationId === null) {
+						snapshot = conversationSnapshot(this.config.conversationsDir);
+					}
+				},
+			);
 		} catch (err) {
+			if (signal?.aborted || err instanceof AgyProcessCancelledError) {
+				return {
+					stopReason: "cancelled",
+					conversationId: session.conversationId,
+					lastStepIdx: session.lastStepIdx,
+					hadUpdates: false,
+				};
+			}
 			return {
 				stopReason: "end_turn",
 				conversationId: session.conversationId,
@@ -89,6 +117,7 @@ export class Adapter {
 			};
 		}
 		this.children.set(sessionId, child);
+		if (signal?.aborted) this.cancel(sessionId);
 
 		// Drain stderr concurrently (resolves when the process exits).
 		const stderrPromise = child.stderr
@@ -143,7 +172,7 @@ export class Adapter {
 		const stderr = (await stderrPromise).trim();
 		if (stderr.length > 0) console.error(`[agy-acp] agy stderr: ${stderr}`);
 
-		const wasCancelled = this.cancelled.delete(sessionId);
+		const wasCancelled = signal?.aborted ?? false;
 
 		const outcome: PromptOutcome = {
 			stopReason: wasCancelled ? "cancelled" : "end_turn",
