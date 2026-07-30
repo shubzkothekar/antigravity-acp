@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Node.js / `npx` support via `tsx` (no TypeScript compile step): `npx antigravity-acp` / `npx agy-acp`.
+- `better-sqlite3` and Node `child_process`/stream helpers so the server is not Bun-only at runtime.
+
+### Changed
+- Package `bin` entries point at `bin/agy-acp.mjs`, which registers tsx and loads `index.ts`.
+- `postinstall` and `start` scripts use `tsx` (Bun still available via `start:bun` and compile targets).
+
+### Added
 - Session config options ported from agy-acp: `effort` (`low`|`medium`|`high`), `sandbox`, and dedicated `skip_permissions`, plus mode value `accept-edits`.
 - Native `agy` flags for `--mode` (`accept-edits`|`plan`), `--effort`, and `--sandbox`.
 - Live and replay `agent_thought_chunk` streaming from AgentText protobuf field 3.

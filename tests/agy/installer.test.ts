@@ -22,6 +22,7 @@ import {
 	releaseUrl,
 	sha256hex,
 } from "../../src/agy/installer";
+import * as procUtils from "../../src/utils/process";
 
 describe("agy/installer.ts", () => {
 	let logMock: ReturnType<typeof mock>;
@@ -66,10 +67,11 @@ describe("agy/installer.ts", () => {
 
 	describe("extractTarGz()", () => {
 		it("should throw on non-zero exit code", async () => {
-			spyOn(Bun, "spawn").mockReturnValue({
+			spyOn(procUtils, "runCapture").mockResolvedValue({
+				exitCode: 1,
+				stdout: "",
 				stderr: "some tar error",
-				exited: Promise.resolve(1),
-			} as any);
+			});
 
 			await expect(extractTarGz("dummy.tar.gz", "dest")).rejects.toThrow(
 				"tar exited 1: some tar error",
@@ -77,9 +79,11 @@ describe("agy/installer.ts", () => {
 		});
 
 		it("should succeed on zero exit code", async () => {
-			spyOn(Bun, "spawn").mockReturnValue({
-				exited: Promise.resolve(0),
-			} as any);
+			spyOn(procUtils, "runCapture").mockResolvedValue({
+				exitCode: 0,
+				stdout: "",
+				stderr: "",
+			});
 
 			await expect(
 				extractTarGz("dummy.tar.gz", "dest"),
@@ -89,10 +93,11 @@ describe("agy/installer.ts", () => {
 
 	describe("extractZip()", () => {
 		it("should throw on non-zero exit code", async () => {
-			spyOn(Bun, "spawn").mockReturnValue({
+			spyOn(procUtils, "runCapture").mockResolvedValue({
+				exitCode: 1,
+				stdout: "",
 				stderr: "some zip error",
-				exited: Promise.resolve(1),
-			} as any);
+			});
 
 			await expect(extractZip("dummy.zip", "dest")).rejects.toThrow(
 				"Expand-Archive exited 1: some zip error",
@@ -100,9 +105,11 @@ describe("agy/installer.ts", () => {
 		});
 
 		it("should succeed on zero exit code", async () => {
-			spyOn(Bun, "spawn").mockReturnValue({
-				exited: Promise.resolve(0),
-			} as any);
+			spyOn(procUtils, "runCapture").mockResolvedValue({
+				exitCode: 0,
+				stdout: "",
+				stderr: "",
+			});
 
 			await expect(extractZip("dummy.zip", "dest")).resolves.toBeUndefined();
 		});
@@ -293,9 +300,7 @@ describe("agy/installer.ts", () => {
 			]);
 
 			// Mock tar spawn
-			const spawnSpy = spyOn(Bun, "spawn").mockReturnValue({
-				exited: Promise.resolve(0),
-			} as any);
+			const spawnSpy = spyOn(procUtils, "runCapture").mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
 
 			await ensureAgy({ destDir, log: logMock, warn: warnMock });
 
@@ -349,15 +354,17 @@ describe("agy/installer.ts", () => {
 				} as any,
 			]);
 
-			const spawnSpy = spyOn(Bun, "spawn").mockReturnValue({
-				exited: Promise.resolve(0),
-			} as any);
+			const spawnSpy = spyOn(procUtils, "runCapture").mockResolvedValue({
+				exitCode: 0,
+				stdout: "",
+				stderr: "",
+			});
 
 			await ensureAgy({ destDir, log: logMock, warn: warnMock });
 
 			expect(spawnSpy).toHaveBeenCalledWith(
-				expect.arrayContaining(["powershell", "-NoProfile"]),
-				expect.any(Object),
+				"powershell",
+				expect.arrayContaining(["-NoProfile", "-NonInteractive"]),
 			);
 
 			expect(logMock).toHaveBeenCalledWith(
@@ -397,9 +404,7 @@ describe("agy/installer.ts", () => {
 				} as any,
 			]);
 
-			spyOn(Bun, "spawn").mockReturnValue({
-				exited: Promise.resolve(0),
-			} as any);
+			spyOn(procUtils, "runCapture").mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
 
 			await ensureAgy({ destDir, log: logMock, warn: warnMock });
 

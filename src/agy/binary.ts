@@ -8,20 +8,31 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
+
+function moduleDir(): string {
+	// Prefer Bun's import.meta.dir; fall back to Node's import.meta.url.
+	const dir = (import.meta as ImportMeta & { dir?: string }).dir;
+	if (typeof dir === "string" && dir.length > 0) return dir;
+	return path.dirname(fileURLToPath(import.meta.url));
+}
 
 /** Path where postinstall deposits the downloaded agy binary.
- *  - npm install: looks in <package-root>/bin/
+ *  - npm/npx install: looks in <package-root>/bin/
  *  - compiled SEA: looks next to the executable itself */
 export function downloadedAgyPath(): string {
 	const exe = process.platform === "win32" ? "agy.exe" : "agy";
-	// process.execPath is the compiled binary when running as SEA,
-	// or the bun runtime otherwise (in which case bin/ next to package root is correct).
-	const isSea =
-		!process.execPath.endsWith("bun") && !process.execPath.endsWith("bun.exe");
-	if (isSea) {
+	const base = path.basename(process.execPath).toLowerCase();
+	const isRuntime =
+		base === "bun" ||
+		base === "bun.exe" ||
+		base === "node" ||
+		base === "node.exe";
+	if (!isRuntime) {
+		// Compiled single-executable application.
 		return path.join(path.dirname(process.execPath), exe);
 	}
-	const packageRoot = path.resolve(import.meta.dir, "..", "..");
+	const packageRoot = path.resolve(moduleDir(), "..", "..");
 	return path.join(packageRoot, "bin", exe);
 }
 

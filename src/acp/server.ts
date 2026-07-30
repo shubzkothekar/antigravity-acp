@@ -1,25 +1,12 @@
-// Wire Bun's stdio to the ACP connection and dispatch to AgyAcpAgent.
+// Wire stdio to the ACP connection and dispatch to AgyAcpAgent.
 
 import { agent, methods, ndJsonStream } from "@agentclientprotocol/sdk";
 import pkg from "../../package.json";
 import { resolveAgyBinary } from "../agy/binary";
 import { CONVERSATION_DIR } from "../constants";
+import { stdinReadable, stdoutWritable } from "../utils/process";
 import { AgyAcpAgent } from "./agent";
 import { AcpClient } from "./client";
-
-/** A WritableStream backed by Bun's stdout sink (the ACP wire to the client). */
-function stdoutWritable(): WritableStream<Uint8Array> {
-	const sink = Bun.stdout.writer();
-	return new WritableStream<Uint8Array>({
-		write(chunk) {
-			sink.write(chunk);
-			sink.flush();
-		},
-		close() {
-			sink.end();
-		},
-	});
-}
 
 /** Identity parser for raw (non-builtin) ACP methods. */
 const raw = <T>() => ({ parse: (p: unknown) => p as T });
@@ -35,8 +22,8 @@ export function runAcp() {
 		version: pkg.version ?? "0.0.0",
 	});
 
-	// ndJsonStream(writableToClient, readableFromClient) — both native Web streams.
-	const stream = ndJsonStream(stdoutWritable(), Bun.stdin.stream());
+	// ndJsonStream(writableToClient, readableFromClient) — Web streams over stdio.
+	const stream = ndJsonStream(stdoutWritable(), stdinReadable());
 
 	const connection = agent({ name: "agy-acp" })
 		.onRequest(methods.agent.initialize, () => agentImpl.initialize())

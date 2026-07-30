@@ -1,24 +1,18 @@
-// Spawning and querying the agy CLI via Bun's native process APIs.
+// Spawning and querying the agy CLI.
 
 import {
 	AGY_NATIVE_MODES,
 	BYPASS_MODES,
 	DEFAULT_EFFORT,
 } from "../constants";
+import { runCapture, spawnProcess, type SpawnedProcess } from "../utils/process";
 
-/** Query agy for the list of available model ids (empty on any failure).
- *  Uses async spawn to avoid blocking the event loop (~5s for `agy models`). */
+/** Query agy for the list of available model ids (empty on any failure). */
 export async function discoverModels(binary: string): Promise<string[]> {
 	try {
-		const proc = Bun.spawn([binary, "models"], {
-			stdin: "ignore",
-			stdout: "pipe",
-			stderr: "ignore",
-		});
-		const text = await new Response(proc.stdout).text();
-		const exitCode = await proc.exited;
+		const { exitCode, stdout } = await runCapture(binary, ["models"]);
 		if (exitCode !== 0) return [];
-		return text
+		return stdout
 			.split("\n")
 			.map((line) => line.trim())
 			.filter((line) => line.length > 0);
@@ -81,8 +75,8 @@ export function spawnAgy(
 	binary: string,
 	args: string[],
 	cwd: string,
-): Bun.Subprocess<"ignore", "ignore", "pipe"> {
-	return Bun.spawn([binary, ...args], {
+): SpawnedProcess {
+	return spawnProcess(binary, args, {
 		cwd,
 		stdin: "ignore",
 		stdout: "ignore",

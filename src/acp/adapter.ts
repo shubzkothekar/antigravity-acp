@@ -12,6 +12,7 @@ import { POLL_INTERVAL_MS } from "../constants";
 import { conversationSnapshot } from "../conversation/scan";
 import { StreamPoller } from "../conversation/streaming";
 import type { Session } from "../types/session";
+import type { SpawnedProcess } from "../utils/process";
 import type { AcpClient } from "./client";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -33,7 +34,7 @@ export interface AdapterConfig {
 }
 
 export class Adapter {
-	private readonly children = new Map<string, Bun.Subprocess>();
+	private readonly children = new Map<string, SpawnedProcess>();
 	private readonly cancelled = new Set<string>();
 
 	constructor(private readonly config: AdapterConfig) {}
@@ -87,7 +88,7 @@ export class Adapter {
 			extraArgs: extraArgsFromEnv(),
 		});
 
-		let child: Bun.Subprocess;
+		let child: SpawnedProcess;
 		try {
 			child = spawnAgy(this.config.binary, args, effectiveCwd);
 		} catch (err) {
@@ -103,7 +104,7 @@ export class Adapter {
 
 		// Drain stderr concurrently (resolves when the process exits).
 		const stderrPromise = child.stderr
-			? new Response(child.stderr as ReadableStream).text()
+			? new Response(child.stderr).text()
 			: Promise.resolve("");
 
 		const poller = new StreamPoller({
@@ -156,12 +157,14 @@ export class Adapter {
 
 		const wasCancelled = this.cancelled.delete(sessionId);
 
-		if (!wasCancelled && exitCode !== 0) {
-			console.error(`[agy-acp] WARN: agy exited with status ${exitCode}`);
+		const code = exitCode ?? 1;
+
+		if (!wasCancelled && code !== 0) {
+			console.error(`[agy-acp] WARN: agy exited with status ${code}`);
 		}
 
 		const swallowedError =
-			!wasCancelled && exitCode === 0 && !poller.hadUpdates
+			!wasCancelled && code === 0 && !poller.hadUpdates
 				? detectSwallowedAgyError(
 						this.config.conversationsDir,
 						logPreSnapshot,
@@ -171,7 +174,7 @@ export class Adapter {
 
 		const errorMessage = decideTurnError({
 			wasCancelled,
-			exitCode,
+			exitCode: code,
 			hadUpdates: poller.hadUpdates,
 			stderrText: stderr,
 			swallowedError,

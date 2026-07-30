@@ -67,14 +67,14 @@ export async function extractTarGz(
 	archive: string,
 	destDir: string,
 ): Promise<void> {
-	const proc = Bun.spawn(["tar", "-xzf", archive, "-C", destDir], {
-		stdin: "ignore",
-		stdout: "ignore",
-		stderr: "pipe",
-	});
-	const exitCode = await proc.exited;
+	const { runCapture } = await import("../utils/process");
+	const { exitCode, stderr } = await runCapture("tar", [
+		"-xzf",
+		archive,
+		"-C",
+		destDir,
+	]);
 	if (exitCode !== 0) {
-		const stderr = await new Response(proc.stderr as ReadableStream).text();
 		throw new Error(`tar exited ${exitCode}: ${stderr.trim()}`);
 	}
 }
@@ -83,19 +83,14 @@ export async function extractZip(
 	archive: string,
 	destDir: string,
 ): Promise<void> {
-	const proc = Bun.spawn(
-		[
-			"powershell",
-			"-NoProfile",
-			"-NonInteractive",
-			"-Command",
-			`Expand-Archive -LiteralPath '${archive}' -DestinationPath '${destDir}' -Force`,
-		],
-		{ stdin: "ignore", stdout: "ignore", stderr: "pipe" },
-	);
-	const exitCode = await proc.exited;
+	const { runCapture } = await import("../utils/process");
+	const { exitCode, stderr } = await runCapture("powershell", [
+		"-NoProfile",
+		"-NonInteractive",
+		"-Command",
+		`Expand-Archive -LiteralPath '${archive}' -DestinationPath '${destDir}' -Force`,
+	]);
 	if (exitCode !== 0) {
-		const stderr = await new Response(proc.stderr as ReadableStream).text();
 		throw new Error(`Expand-Archive exited ${exitCode}: ${stderr.trim()}`);
 	}
 }

@@ -8,6 +8,7 @@
 import * as fs from "node:fs";
 import { DEFAULT_EFFORT, SESSIONS_FILE, STATE_DIR } from "../constants";
 import type { StoredSession } from "../types/session";
+import { readFileText, writeFile } from "../utils/process";
 
 interface DiskStore {
 	sessions: Record<string, StoredSession>;
@@ -105,7 +106,7 @@ export class SessionStore {
 				delete store.sessions[sessionId];
 				fs.mkdirSync(this.dir, { recursive: true });
 				const tmp = `${this.file}.tmp`;
-				await Bun.write(tmp, JSON.stringify(store, null, 2));
+				await writeFile(tmp, JSON.stringify(store, null, 2));
 				fs.renameSync(tmp, this.file);
 			})
 			.catch((err) => {
@@ -131,7 +132,7 @@ export class SessionStore {
 
 	private async load(): Promise<DiskStore> {
 		try {
-			const parsed = JSON.parse(await Bun.file(this.file).text()) as {
+			const parsed = JSON.parse(await readFileText(this.file)) as {
 				sessions?: Record<string, Record<string, unknown>>;
 			};
 			const raw = parsed.sessions ?? {};
@@ -153,7 +154,7 @@ export class SessionStore {
 		store.sessions[sessionId] = session;
 		fs.mkdirSync(this.dir, { recursive: true });
 		const tmp = `${this.file}.tmp`;
-		await Bun.write(tmp, JSON.stringify(store, null, 2));
+		await writeFile(tmp, JSON.stringify(store, null, 2));
 		fs.renameSync(tmp, this.file);
 	}
 }

@@ -1,7 +1,8 @@
 # Antigravity ACP Server
 
 An [Agent Client Protocol](https://agentclientprotocol.com) (ACP) server for
-Google Antigravity's `agy` CLI, built on [Bun](https://bun.com). It lets any
+Google Antigravity's `agy` CLI. Runs on **Node.js via [tsx](https://tsx.is)**
+(no compile step; works with `npx`) or [Bun](https://bun.com). It lets any
 ACP-compatible editor drive `agy`: it spawns the CLI, streams its progress live,
 and replays conversation history on demand.
 
@@ -38,14 +39,31 @@ background.
 
 ## Run
 
-**From source (Bun required):**
+**With npx (Node 20+, no install / no compile):**
 
 ```bash
-bun run index.ts          # ACP over stdio
+npx antigravity-acp          # ACP over stdio
+npx antigravity-acp --version
+# aliases: npx agy-acp
+```
+
+**From source (Node + tsx):**
+
+```bash
+npm install                  # or: bun install / pnpm install
+npm start                    # tsx index.ts
+npm exec agy-acp -- --version
+# or: npx tsx index.ts
+```
+
+**From source (Bun):**
+
+```bash
+bun run start:bun            # bun run index.ts
 bun run index.ts --version
 ```
 
-**As a compiled single-executable (no Bun required):**
+**As a compiled single-executable (no Node/Bun required):**
 
 ```bash
 dist/agy-acp-darwin-arm64   # macOS Apple Silicon
@@ -71,8 +89,9 @@ If none are found the server downloads the matching release from GitHub
 (`google-antigravity/antigravity-cli`) and verifies its SHA-256. The download is
 skipped when `AGY_SKIP_DOWNLOAD=1` or `$AGY_BIN` is set.
 
-`bun install` runs the same download via the `postinstall` hook, so a plain
-`bun install` also provisions `agy` for source runs.
+`npm install` / `bun install` run the same download via the `postinstall` hook
+(`tsx scripts/postinstall.ts`), so a plain install also provisions `agy` for
+source runs.
 
 ## Flags / env
 
@@ -122,10 +141,11 @@ auto-downloads `agy` on first launch if not present next to the executable.
 ## Architecture
 
 ```
+bin/agy-acp.mjs               npx/node entry (registers tsx, loads index.ts)
 index.ts                      entry: startup, agy auto-install, ACP wiring
 src/
   acp/                        ACP surface
-    server.ts                 Bun stdio <-> ndJsonStream <-> agent
+    server.ts                 stdio <-> ndJsonStream <-> agent
     agent.ts                  initialize / session.* / prompt / cancel
     sessions.ts               in-memory registry + eviction
     adapter.ts                prompt turn: spawn agy, poll, stream
@@ -133,12 +153,12 @@ src/
   agy/
     binary.ts                 resolve binary: SEA-local / bin/ / $AGY_BIN / PATH
     installer.ts              shared download + SHA-256 verify + extract logic
-    process.ts                Bun.spawn, arg building, model discovery
+    process.ts                spawn, arg building, model discovery
     logScan.ts                cli.log swallowed-error detection
   constants/
     index.ts                  shared constants (paths, poll intervals, modes, commands)
   conversation/
-    database.ts               bun:sqlite reader (reusable handle)
+    database.ts               better-sqlite3 reader (reusable handle)
     scan.ts                   discover new conversation DBs
     translator.ts             shared step -> ACP engine (stream + replay)
     streaming.ts              live poll loop (stream mode)
@@ -150,9 +170,9 @@ src/
   narration/                  narration filter
   gen/steps.ts                generated protobuf
   types/                      type definitions (session, step row)
-  utils/lru.ts                small LRU
+  utils/                      process/fs helpers + LRU
 scripts/
-  postinstall.ts              npm install hook: download agy into bin/
+  postinstall.ts              install hook: download agy into bin/
 ```
 
 ### Shared streaming/replay engine
@@ -173,11 +193,11 @@ task/permission/error enrichment — is identical, so both drive a single
   are cached per conversation and validated by file `(mtime, size)`. An unchanged
   conversation returns instantly; a conversation that merely grew has only its new
   tail of steps read and translated, then appended. (agy DBs are append-only.)
-- **Reused DB handle**: the live poll loop keeps one `bun:sqlite` handle +
+- **Reused DB handle**: the live poll loop keeps one SQLite handle +
   prepared statement open for the whole turn instead of reopening each tick.
-- **Bun-native throughout**: `bun:sqlite`, `Bun.spawn`, `Bun.stdin`/`Bun.stdout`,
-  `Bun.file`/`Bun.write` — no `better-sqlite3`, `protobufjs` runtime, or
-  node-stream shims.
+- **Node + Bun**: runtime I/O uses Node APIs (`child_process`, `fs`, streams) and
+  `better-sqlite3`, so the same sources run under `tsx`/`npx` without a compile
+  step. Optional Bun single-executable builds remain available.
 
 ## Test
 

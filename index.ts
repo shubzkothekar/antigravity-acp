@@ -1,5 +1,5 @@
-#!/usr/bin/env bun
-// Entry point for the agy ACP server.
+#!/usr/bin/env node
+// Entry point for the agy ACP server (Node via tsx, or Bun).
 
 import * as fs from "node:fs";
 import * as path from "node:path";

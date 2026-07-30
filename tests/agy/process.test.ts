@@ -5,6 +5,7 @@ import {
 	extraArgsFromEnv,
 	spawnAgy,
 } from "../../src/agy/process";
+import * as procUtils from "../../src/utils/process";
 
 describe("agy/process.ts", () => {
 	afterEach(() => {
@@ -14,34 +15,32 @@ describe("agy/process.ts", () => {
 
 	describe("discoverModels()", () => {
 		it("should return model ids on success (exit code 0)", async () => {
-			const mockSpawn = spyOn(Bun, "spawn").mockReturnValue({
+			const mockCapture = spyOn(procUtils, "runCapture").mockResolvedValue({
+				exitCode: 0,
 				stdout: "model-1\nmodel-2\n  model-3  \n\n",
-				exited: Promise.resolve(0),
-			} as any);
+				stderr: "",
+			});
 
 			const models = await discoverModels("dummy-binary");
-			expect(mockSpawn).toHaveBeenCalledWith(["dummy-binary", "models"], {
-				stdin: "ignore",
-				stdout: "pipe",
-				stderr: "ignore",
-			});
+			expect(mockCapture).toHaveBeenCalledWith("dummy-binary", ["models"]);
 			expect(models).toEqual(["model-1", "model-2", "model-3"]);
 		});
 
 		it("should return empty array on non-zero exit code", async () => {
-			spyOn(Bun, "spawn").mockReturnValue({
+			spyOn(procUtils, "runCapture").mockResolvedValue({
+				exitCode: 1,
 				stdout: "model-1\nmodel-2",
-				exited: Promise.resolve(1),
-			} as any);
+				stderr: "",
+			});
 
 			const models = await discoverModels("dummy-binary");
 			expect(models).toEqual([]);
 		});
 
 		it("should return empty array when spawn throws an exception", async () => {
-			spyOn(Bun, "spawn").mockImplementation(() => {
-				throw new Error("spawn failed");
-			});
+			spyOn(procUtils, "runCapture").mockRejectedValue(
+				new Error("spawn failed"),
+			);
 
 			const models = await discoverModels("dummy-binary");
 			expect(models).toEqual([]);
@@ -198,10 +197,14 @@ describe("agy/process.ts", () => {
 
 	describe("spawnAgy()", () => {
 		it("should spawn agy with expected config", () => {
-			const mockSpawn = spyOn(Bun, "spawn").mockReturnValue({} as any);
+			const mockSpawn = spyOn(procUtils, "spawnProcess").mockReturnValue({
+				exited: Promise.resolve(0),
+				stderr: null,
+				kill: () => true,
+			} as any);
 			spawnAgy("my-agy", ["--foo", "bar"], "/some/cwd");
 
-			expect(mockSpawn).toHaveBeenCalledWith(["my-agy", "--foo", "bar"], {
+			expect(mockSpawn).toHaveBeenCalledWith("my-agy", ["--foo", "bar"], {
 				cwd: "/some/cwd",
 				stdin: "ignore",
 				stdout: "ignore",
