@@ -100,15 +100,24 @@ auto-downloads `agy` on first launch if not present next to the executable.
 
 ## ACP surface
 
-- **initialize** — advertises `loadSession`, `additionalDirectories`,
-  `list`/`delete`/`resume`/`close`, `embeddedContext`.
-- **session/new** — accepts `cwd` and `additionalDirectories`; returns the session configuration options (including modes and available models).
-- **session/set_config_option** — model and mode selection; persisted per session.
+- **initialize** — advertises `loadSession`, streaming, `additionalDirectories`,
+  `list`/`delete`/`resume`/`close`, `embeddedContext`, and text prompts.
+- **session/new** — accepts `cwd` and `additionalDirectories`; returns the session configuration options (modes, models, effort, sandbox, skip permissions).
+- **session/set_config_option** — persisted per session:
+  - `mode`: `default` | `accept-edits` | `plan` | `bypassPermissions` (legacy skip alias)
+  - `model`: from `agy models`
+  - `effort`: `low` | `medium` | `high` (default `medium`) → `agy --effort`
+  - `sandbox`: `off` | `on` → `agy --sandbox`
+  - `skip_permissions`: `off` | `on` → `agy --dangerously-skip-permissions`
 - **session/load** — replays full conversation history from the `agy` SQLite DB,
-  including tool calls, task/permission/error decorators, and title updates.
+  including tool calls, thought chunks, task/permission/error decorators, and title updates.
 - **session/resume** — re-attaches a client and re-sends `available_commands_update` and `config_option_update` notifications.
 - **Post-session notifications** — after every `session/new`, `session/load`, and
   `session/resume` the server sends `available_commands_update` → `config_option_update` in order, so the UI can render the mode picker and model selector immediately.
+- **Thought streaming** — agent reasoning text (protobuf AgentText field 3) is
+  emitted as `agent_thought_chunk` during live turns and history replay.
+- **Swallowed-error detection** — empty successful turns are checked against
+  agy `cli-*.log` for backend failures (e.g. quota / RESOURCE_EXHAUSTED).
 
 ## Architecture
 
@@ -125,6 +134,7 @@ src/
     binary.ts                 resolve binary: SEA-local / bin/ / $AGY_BIN / PATH
     installer.ts              shared download + SHA-256 verify + extract logic
     process.ts                Bun.spawn, arg building, model discovery
+    logScan.ts                cli.log swallowed-error detection
   constants/
     index.ts                  shared constants (paths, poll intervals, modes, commands)
   conversation/
@@ -148,13 +158,13 @@ scripts/
 ### Shared streaming/replay engine
 
 Live streaming and history replay differ only in how they treat the agent's
-growing text stream. Everything else — tool calls, titles, user prompts, and the
+growing text/thought streams. Everything else — tool calls, titles, user prompts, and the
 task/permission/error enrichment — is identical, so both drive a single
 [`Translator`](src/conversation/translator.ts):
 
-- **stream** emits the newly-appended text slice each poll and dedups tool steps
+- **stream** emits the newly-appended text/thought slice each poll and dedups tool steps
   it has already sent;
-- **replay** buffers consecutive agent-text parts and flushes them as one message
+- **replay** buffers consecutive agent-text and thought parts and flushes them as one message
   at each boundary.
 
 ### Caching & performance

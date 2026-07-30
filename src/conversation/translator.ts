@@ -35,13 +35,24 @@ function agentChunk(text: string): SessionUpdate {
 	};
 }
 
+function thoughtChunk(text: string): SessionUpdate {
+	return {
+		sessionUpdate: "agent_thought_chunk",
+		content: { type: "text", text },
+	} as SessionUpdate;
+}
+
 export class Translator {
 	// Streaming: idx -> chars of agent text already emitted (for incremental diff).
 	private readonly agentTextLengths = new Map<number, number>();
+	// Streaming: idx -> chars of thought text already emitted.
+	private readonly thoughtTextLengths = new Map<number, number>();
 	// Streaming: tool step indices already emitted (dedup across polls).
 	private readonly emittedSteps = new Set<number>();
 	// Replay: buffered consecutive agent-text parts, flushed at boundaries.
 	private readonly pendingAgentParts: string[] = [];
+	// Replay: buffered consecutive thought parts, flushed at boundaries.
+	private readonly pendingThoughtParts: string[] = [];
 
 	private _lastTitle: string | null = null;
 	private _lastStepIdx = -1;
@@ -63,8 +74,11 @@ export class Translator {
 	translate(rows: StepRow[]): SessionUpdate[] {
 		const out: SessionUpdate[] = [];
 		for (const row of rows) this.translateRow(row, out);
-		// Replay groups agent text per batch; a batch ends a message boundary.
-		if (this.opts.mode === "replay") this.flushAgentBuffer(out);
+		// Replay groups agent/thought text per batch; a batch ends a message boundary.
+		if (this.opts.mode === "replay") {
+			this.flushAgentBuffer(out);
+			this.flushThoughtBuffer(out);
+		}
 		if (out.length > 0) this._hadUpdates = true;
 		return out;
 	}
@@ -73,7 +87,7 @@ export class Translator {
 		this._lastStepIdx = Math.max(this._lastStepIdx, row.idx);
 
 		switch (row.stepType) {
-			case 15: // agent text chunk
+			case 15: // agent text / thought chunk
 				this.handleAgentText(row, out);
 				return;
 
@@ -85,6 +99,7 @@ export class Translator {
 				// The streaming client already has its own prompt; only replay re-emits it.
 				if (this.opts.mode === "stream") return;
 				this.flushAgentBuffer(out);
+				this.flushThoughtBuffer(out);
 				this.pushDispatched(row, out);
 				return;
 
@@ -93,6 +108,7 @@ export class Translator {
 				// current agent message; in streaming, dedup by idx across polls.
 				if (this.opts.mode === "replay") {
 					this.flushAgentBuffer(out);
+					this.flushThoughtBuffer(out);
 				} else if (this.emittedSteps.has(row.idx)) {
 					return;
 				}
@@ -144,19 +160,30 @@ export class Translator {
 
 	private handleAgentText(row: StepRow, out: SessionUpdate[]): void {
 		const text = row.stepPayload.agentText?.text ?? "";
+		const thought = row.stepPayload.agentText?.thought ?? "";
 
 		if (this.opts.mode === "replay") {
 			if (text.length > 0) this.pendingAgentParts.push(text);
+			if (thought.trim().length > 0) this.pendingThoughtParts.push(thought);
 			return;
 		}
 
 		// Streaming: emit only the slice appended since the last poll for this idx.
 		const emitted = this.agentTextLengths.get(row.idx) ?? 0;
-		if (text.length <= emitted) return;
-		this.agentTextLengths.set(row.idx, text.length);
-		if (this.opts.skipNarration && isNarration(text)) return;
-		const delta = text.slice(emitted);
-		if (delta.length > 0) out.push(agentChunk(delta));
+		if (text.length > emitted) {
+			this.agentTextLengths.set(row.idx, text.length);
+			if (!(this.opts.skipNarration && isNarration(text))) {
+				const delta = text.slice(emitted);
+				if (delta.length > 0) out.push(agentChunk(delta));
+			}
+		}
+
+		const thoughtEmitted = this.thoughtTextLengths.get(row.idx) ?? 0;
+		if (thought.length > thoughtEmitted) {
+			this.thoughtTextLengths.set(row.idx, thought.length);
+			const delta = thought.slice(thoughtEmitted);
+			if (delta.trim().length > 0) out.push(thoughtChunk(delta));
+		}
 	}
 
 	private flushAgentBuffer(out: SessionUpdate[]): void {
@@ -166,5 +193,12 @@ export class Translator {
 			: this.pendingAgentParts.join("\n");
 		this.pendingAgentParts.length = 0;
 		if (text && text.length > 0) out.push(agentChunk(text));
+	}
+
+	private flushThoughtBuffer(out: SessionUpdate[]): void {
+		if (this.pendingThoughtParts.length === 0) return;
+		const text = this.pendingThoughtParts.join("\n");
+		this.pendingThoughtParts.length = 0;
+		if (text.trim().length > 0) out.push(thoughtChunk(text));
 	}
 }

@@ -1,6 +1,10 @@
 // Spawning and querying the agy CLI via Bun's native process APIs.
 
-const BYPASS_MODES = new Set(["bypassPermissions", "bypass", "dontAsk"]);
+import {
+	AGY_NATIVE_MODES,
+	BYPASS_MODES,
+	DEFAULT_EFFORT,
+} from "../constants";
 
 /** Query agy for the list of available model ids (empty on any failure).
  *  Uses async spawn to avoid blocking the event loop (~5s for `agy models`). */
@@ -29,7 +33,14 @@ export interface AgyArgsOptions {
 	additionalDirs?: string[];
 	conversationId: string | null;
 	modelId: string | null;
+	/** Mode: default | accept-edits | plan | bypassPermissions (legacy skip). */
 	permissionMode: string | null;
+	/** Reasoning effort low|medium|high (default medium). */
+	effort?: string | null;
+	/** Pass --sandbox when true. */
+	sandbox?: boolean;
+	/** Pass --dangerously-skip-permissions when true. */
+	skipPermissions?: boolean;
 	prompt: string;
 	/** Extra args from $AGY_EXTRA_ARGS, already split. */
 	extraArgs?: string[];
@@ -44,9 +55,22 @@ export function buildAgyArgs(opts: AgyArgsOptions): string[] {
 	if (opts.extraArgs?.length) args.push(...opts.extraArgs);
 	if (opts.conversationId) args.push("--conversation", opts.conversationId);
 	if (opts.modelId) args.push("--model", opts.modelId);
-	if (opts.permissionMode && BYPASS_MODES.has(opts.permissionMode)) {
-		args.push("--dangerously-skip-permissions");
+
+	const mode = opts.permissionMode;
+	if (mode && AGY_NATIVE_MODES.has(mode)) {
+		args.push("--mode", mode);
 	}
+
+	const effort = opts.effort?.trim() || DEFAULT_EFFORT;
+	args.push("--effort", effort);
+
+	if (opts.sandbox) args.push("--sandbox");
+
+	const skip =
+		Boolean(opts.skipPermissions) ||
+		(mode != null && BYPASS_MODES.has(mode));
+	if (skip) args.push("--dangerously-skip-permissions");
+
 	args.push("-p", opts.prompt);
 	return args;
 }

@@ -40,6 +40,28 @@ describe("conversation/translator", () => {
 			expect((updates2[0] as any).content.text).toBe(" world");
 		});
 
+		test("emits thought deltas incrementally", () => {
+			const translator = new Translator({
+				mode: "stream",
+				skipNarration: false,
+			});
+
+			const updates1 = translator.translate([
+				mockStep(1, 15, { agentText: { text: "", thought: "think" } }),
+			]);
+			expect(updates1.length).toBe(1);
+			expect(updates1[0].sessionUpdate).toBe("agent_thought_chunk");
+			expect((updates1[0] as any).content.text).toBe("think");
+
+			const updates2 = translator.translate([
+				mockStep(1, 15, {
+					agentText: { text: "", thought: "thinking more" },
+				}),
+			]);
+			expect(updates2.length).toBe(1);
+			expect((updates2[0] as any).content.text).toBe("ing more");
+		});
+
 		test("deduplicates tool steps by idx", () => {
 			const translator = new Translator({
 				mode: "stream",
@@ -90,6 +112,24 @@ describe("conversation/translator", () => {
 			// Should emit the buffered text as one chunk, then the tool call
 			expect(updates.length).toBe(2);
 			expect((updates[0] as any).content.text).toBe("part1\npart2");
+			expect(updates[1].sessionUpdate).toBe("tool_call");
+		});
+
+		test("buffers thoughts and flushes at tool boundaries", () => {
+			const translator = new Translator({
+				mode: "replay",
+				skipNarration: false,
+			});
+
+			const updates = translator.translate([
+				mockStep(1, 15, { agentText: { text: "", thought: "t1" } }),
+				mockStep(2, 15, { agentText: { text: "", thought: "t2" } }),
+				mockStep(3, 8, { toolRun: { call: { namePrimary: "view_file" } } }),
+			]);
+
+			expect(updates.length).toBe(2);
+			expect(updates[0].sessionUpdate).toBe("agent_thought_chunk");
+			expect((updates[0] as any).content.text).toBe("t1\nt2");
 			expect(updates[1].sessionUpdate).toBe("tool_call");
 		});
 

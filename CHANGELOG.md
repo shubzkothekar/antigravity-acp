@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Session config options ported from agy-acp: `effort` (`low`|`medium`|`high`), `sandbox`, and dedicated `skip_permissions`, plus mode value `accept-edits`.
+- Native `agy` flags for `--mode` (`accept-edits`|`plan`), `--effort`, and `--sandbox`.
+- Live and replay `agent_thought_chunk` streaming from AgentText protobuf field 3.
+- Swallowed-error detection via agy `cli-*.log` when a turn exits successfully with no streamed updates (e.g. quota / RESOURCE_EXHAUSTED).
+- Initialize capability ads for streaming and text prompts.
+
+### Changed
+- Plan mode now uses `agy --mode plan` instead of prompt injection.
+- `bypassPermissions` remains as a legacy mode alias that enables skip-permissions.
+
 ## [1.0.0] - 2026-06-29
 
 ### Added

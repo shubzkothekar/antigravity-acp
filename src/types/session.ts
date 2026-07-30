@@ -1,3 +1,5 @@
+import { DEFAULT_EFFORT } from "../constants";
+
 /** In-memory session state for a live ACP session. */
 export interface Session {
 	/** agy conversation id this session is bound to, or null until first prompt. */
@@ -6,8 +8,17 @@ export interface Session {
 	lastStepIdx: number;
 	/** Selected model id, or null for agy's default. */
 	modelId: string | null;
-	/** Permission mode (e.g. "bypassPermissions"), or null for default. */
+	/**
+	 * Agent mode: `default` | `accept-edits` | `plan` | `bypassPermissions`.
+	 * `null` means default. `bypassPermissions` is a legacy alias for skip-permissions.
+	 */
 	permissionMode: string | null;
+	/** Reasoning effort: `low` | `medium` | `high`. */
+	effort: string;
+	/** Whether to pass `--sandbox` to agy. */
+	sandbox: boolean;
+	/** Whether to pass `--dangerously-skip-permissions` to agy. */
+	skipPermissions: boolean;
 	/** Working directory for this session (from session/new cwd param). */
 	cwd: string;
 	/** Extra workspace roots beyond cwd (from additionalDirectories param). */
@@ -31,6 +42,9 @@ export function newSession(
 		lastStepIdx: -1,
 		modelId: null,
 		permissionMode: null,
+		effort: DEFAULT_EFFORT,
+		sandbox: false,
+		skipPermissions: false,
 		cwd,
 		additionalDirs,
 		title: null,

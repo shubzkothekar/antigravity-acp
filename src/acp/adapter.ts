@@ -2,6 +2,11 @@
 // the client, and finalize. Bridges the agy subprocess and the conversation
 // streaming layer.
 
+import {
+	decideTurnError,
+	detectSwallowedAgyError,
+	snapshotAgyLogs,
+} from "../agy/logScan";
 import { buildAgyArgs, extraArgsFromEnv, spawnAgy } from "../agy/process";
 import { POLL_INTERVAL_MS } from "../constants";
 import { conversationSnapshot } from "../conversation/scan";
@@ -12,11 +17,11 @@ import type { AcpClient } from "./client";
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export interface PromptOutcome {
-	stopReason: "end_turn" | "cancelled";
+	stopReason: "end_turn" | "cancelled" | "error";
 	conversationId: string | null;
 	lastStepIdx: number;
 	hadUpdates: boolean;
-	/** Set when agy failed to start, or exited non-zero with nothing streamed. */
+	/** Set when agy failed to start, exited non-zero, or swallowed a backend error. */
 	error?: string;
 }
 
@@ -66,12 +71,18 @@ export class Adapter {
 				? conversationSnapshot(this.config.conversationsDir)
 				: null;
 
+		const logPreSnapshot = snapshotAgyLogs(this.config.conversationsDir);
+		const spawnTime = new Date();
+
 		const args = buildAgyArgs({
 			workingDir: effectiveCwd,
 			additionalDirs: session.additionalDirs,
 			conversationId: session.conversationId,
 			modelId: session.modelId,
 			permissionMode: session.permissionMode,
+			effort: session.effort,
+			sandbox: session.sandbox,
+			skipPermissions: session.skipPermissions,
 			prompt: promptText,
 			extraArgs: extraArgsFromEnv(),
 		});
@@ -81,7 +92,7 @@ export class Adapter {
 			child = spawnAgy(this.config.binary, args, effectiveCwd);
 		} catch (err) {
 			return {
-				stopReason: "end_turn",
+				stopReason: "error",
 				conversationId: session.conversationId,
 				lastStepIdx: session.lastStepIdx,
 				hadUpdates: false,
@@ -145,22 +156,42 @@ export class Adapter {
 
 		const wasCancelled = this.cancelled.delete(sessionId);
 
+		if (!wasCancelled && exitCode !== 0) {
+			console.error(`[agy-acp] WARN: agy exited with status ${exitCode}`);
+		}
+
+		const swallowedError =
+			!wasCancelled && exitCode === 0 && !poller.hadUpdates
+				? detectSwallowedAgyError(
+						this.config.conversationsDir,
+						logPreSnapshot,
+						spawnTime,
+					)
+				: null;
+
+		const errorMessage = decideTurnError({
+			wasCancelled,
+			exitCode,
+			hadUpdates: poller.hadUpdates,
+			stderrText: stderr,
+			swallowedError,
+		});
+
+		if (errorMessage) {
+			console.error(`[agy-acp] surfacing turn error: ${errorMessage}`);
+		}
+
 		const outcome: PromptOutcome = {
-			stopReason: wasCancelled ? "cancelled" : "end_turn",
+			stopReason: wasCancelled
+				? "cancelled"
+				: errorMessage
+					? "error"
+					: "end_turn",
 			conversationId: poller.conversationId,
 			lastStepIdx: poller.lastStepIdx,
 			hadUpdates: poller.hadUpdates,
 		};
-
-		if (!wasCancelled && exitCode !== 0) {
-			console.error(`[agy-acp] WARN: agy exited with status ${exitCode}`);
-			if (!poller.hadUpdates) {
-				outcome.error =
-					stderr.length > 0
-						? `agy failed: ${stderr}`
-						: `agy exited with status: ${exitCode}`;
-			}
-		}
+		if (errorMessage) outcome.error = errorMessage;
 
 		return outcome;
 	}

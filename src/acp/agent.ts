@@ -19,15 +19,21 @@ import type {
 import { RequestError } from "@agentclientprotocol/sdk";
 import { discoverModels } from "../agy/process";
 import {
+	ACCEPT_EDITS_MODE_ID,
 	AUTH_METHOD_ID,
 	AVAILABLE_COMMANDS,
 	BYPASS_MODE_ID,
+	DEFAULT_EFFORT,
 	DEFAULT_MODE_ID,
+	EFFORT_CONFIG_ID,
+	EFFORT_VALUES,
 	MODE_CONFIG_ID,
+	MODE_VALUES,
 	MODEL_CONFIG_ID,
 	MODELS_CACHE_FILE,
 	PLAN_MODE_ID,
-	PLAN_MODE_INJECTION,
+	SANDBOX_CONFIG_ID,
+	SKIP_PERMISSIONS_CONFIG_ID,
 	STATE_DIR,
 } from "../constants";
 import { ReplayCache } from "../conversation/replay";
@@ -105,7 +111,12 @@ export class AgyAcpAgent {
 			agentInfo: { name: "Antigravity", version: this.config.version },
 			agentCapabilities: {
 				loadSession: true,
-				promptCapabilities: { embeddedContext: true },
+				// Some hosts read a top-level streaming flag (agy-acp parity).
+				...({ streaming: true } as object),
+				promptCapabilities: {
+					embeddedContext: true,
+					...({ text: true } as object),
+				},
 				sessionCapabilities: {
 					list: {},
 					delete: {},
@@ -124,7 +135,7 @@ export class AgyAcpAgent {
 						"Run `agy` to configure authentication if needed.",
 				},
 			],
-		};
+		} as InitializeResponse;
 	}
 
 	/** ACP authenticate — verify agy binary is accessible (credentials managed by agy). */
@@ -271,11 +282,8 @@ export class AgyAcpAgent {
 			this.sessions.adopt(sessionId, session);
 		}
 
-		const rawText = promptText(params.prompt);
-		const text =
-			session.permissionMode === PLAN_MODE_ID
-				? PLAN_MODE_INJECTION + rawText
-				: rawText;
+		// Plan mode is enforced via `agy --mode plan` (see buildAgyArgs).
+		const text = promptText(params.prompt);
 		const outcome = await this.adapter.runPrompt(
 			sessionId,
 			session,
@@ -295,7 +303,11 @@ export class AgyAcpAgent {
 			await this.sessions.persist(sessionId, session);
 		}
 
-		return { stopReason: outcome.stopReason };
+		// ACP PromptResponse stopReason is typically end_turn | cancelled;
+		// map internal "error" (already thrown above when message present) away.
+		const stopReason =
+			outcome.stopReason === "cancelled" ? "cancelled" : "end_turn";
+		return { stopReason };
 	}
 
 	cancel(params: { sessionId?: string }): void {
@@ -309,23 +321,66 @@ export class AgyAcpAgent {
 		value?: unknown;
 	}): Promise<SetSessionConfigOptionResponse> {
 		const sessionId = this.requireSessionId(params.sessionId);
-		const value = typeof params.value === "string" ? params.value : "";
-		if (
-			params.configId !== MODEL_CONFIG_ID &&
-			params.configId !== MODE_CONFIG_ID
-		) {
-			throw RequestError.invalidParams(
-				undefined,
-				`unknown configId: ${params.configId}`,
-			);
+		const value = coerceConfigValue(params.value);
+		if (!params.configId) {
+			throw RequestError.invalidParams(undefined, "missing configId");
 		}
 		if (!value) throw RequestError.invalidParams(undefined, "missing value");
 		const session = await this.requireSession(sessionId);
-		if (params.configId === MODEL_CONFIG_ID) {
-			session.modelId = value;
-		} else if (params.configId === MODE_CONFIG_ID) {
-			session.permissionMode = value;
+
+		switch (params.configId) {
+			case MODEL_CONFIG_ID:
+				session.modelId = value;
+				break;
+			case MODE_CONFIG_ID:
+				if (!(MODE_VALUES as readonly string[]).includes(value)) {
+					throw RequestError.invalidParams(
+						undefined,
+						`invalid mode '${value}' (valid: ${MODE_VALUES.join(", ")})`,
+					);
+				}
+				session.permissionMode = value;
+				// Keep skipPermissions in sync when using the legacy bypass mode value.
+				if (value === BYPASS_MODE_ID) session.skipPermissions = true;
+				break;
+			case EFFORT_CONFIG_ID:
+				if (!(EFFORT_VALUES as readonly string[]).includes(value)) {
+					throw RequestError.invalidParams(
+						undefined,
+						`invalid effort '${value}' (valid: ${EFFORT_VALUES.join(", ")})`,
+					);
+				}
+				session.effort = value;
+				break;
+			case SANDBOX_CONFIG_ID: {
+				const on = parseOnOff(value);
+				if (on === null) {
+					throw RequestError.invalidParams(
+						undefined,
+						`invalid sandbox '${value}' (valid: off, on)`,
+					);
+				}
+				session.sandbox = on;
+				break;
+			}
+			case SKIP_PERMISSIONS_CONFIG_ID: {
+				const on = parseOnOff(value);
+				if (on === null) {
+					throw RequestError.invalidParams(
+						undefined,
+						`invalid skip_permissions '${value}' (valid: off, on)`,
+					);
+				}
+				session.skipPermissions = on;
+				break;
+			}
+			default:
+				throw RequestError.invalidParams(
+					undefined,
+					`unknown configId: ${params.configId}`,
+				);
 		}
+
 		await this.sessions.persist(sessionId, session);
 		return { configOptions: this.configOptions(session) };
 	}
@@ -409,12 +464,56 @@ export class AgyAcpAgent {
 		const options: SessionConfigOption[] = [];
 		const models = this.availableModels;
 
+		// Order matches agy-acp priority: mode, model, effort, sandbox, skip_permissions.
+		const pm = session.permissionMode;
+		const currentMode =
+			pm === BYPASS_MODE_ID
+				? BYPASS_MODE_ID
+				: pm === PLAN_MODE_ID
+					? PLAN_MODE_ID
+					: pm === ACCEPT_EDITS_MODE_ID
+						? ACCEPT_EDITS_MODE_ID
+						: DEFAULT_MODE_ID;
+
+		options.push({
+			id: MODE_CONFIG_ID,
+			name: "Mode",
+			description: "Controls how the agent applies edits and requests review",
+			category: "mode",
+			type: "select",
+			currentValue: currentMode,
+			options: [
+				{
+					value: DEFAULT_MODE_ID,
+					name: "Default",
+					description: "Request review before applying file writes",
+				},
+				{
+					value: ACCEPT_EDITS_MODE_ID,
+					name: "Accept Edits",
+					description: "Apply file edits automatically",
+				},
+				{
+					value: PLAN_MODE_ID,
+					name: "Plan",
+					description: "Plan without applying edits (agy --mode plan)",
+				},
+				{
+					value: BYPASS_MODE_ID,
+					name: "Skip Permissions (legacy)",
+					description:
+						"Legacy alias for enabling skip-permissions; prefer the Skip Permissions toggle",
+				},
+			],
+		});
+
 		if (models.length > 0) {
 			const currentModel =
 				session.modelId ?? models[0] ?? "Gemini 3.5 Flash (Medium)";
 			options.push({
 				id: MODEL_CONFIG_ID,
 				name: "Model",
+				description: "Model used for this session",
 				category: "model",
 				type: "select",
 				currentValue: currentModel,
@@ -422,43 +521,72 @@ export class AgyAcpAgent {
 			});
 		}
 
-		const pm = session.permissionMode;
-		const currentMode =
-			pm === BYPASS_MODE_ID
-				? BYPASS_MODE_ID
-				: pm === PLAN_MODE_ID
-					? PLAN_MODE_ID
-					: DEFAULT_MODE_ID;
+		options.push({
+			id: EFFORT_CONFIG_ID,
+			name: "Effort",
+			description: "Reasoning effort / thinking level",
+			category: "thought_level",
+			type: "select",
+			currentValue: session.effort || DEFAULT_EFFORT,
+			options: [
+				{ value: "low", name: "Low", description: "Faster, less deliberation" },
+				{
+					value: "medium",
+					name: "Medium",
+					description: "Balanced reasoning effort",
+				},
+				{ value: "high", name: "High", description: "Deeper reasoning" },
+			],
+		});
 
 		options.push({
-			id: MODE_CONFIG_ID,
-			name: "Mode",
-			category: "mode",
+			id: SANDBOX_CONFIG_ID,
+			name: "Sandbox",
+			description: "Run tool commands in the OS sandbox",
+			category: "_safety",
 			type: "select",
-			currentValue: currentMode,
+			currentValue: session.sandbox ? "on" : "off",
 			options: [
-				{
-					value: DEFAULT_MODE_ID,
-					name: "Standard",
-					description: "Antigravity's standard mode",
-				},
-				{
-					value: PLAN_MODE_ID,
-					name: "Plan Mode",
-					description:
-						"Read-only exploration: agent may only read and search, then returns " +
-						"a step-by-step plan without making any changes",
-				},
-				{
-					value: BYPASS_MODE_ID,
-					name: "Skip Permissions",
-					description:
-						"Run without permission prompts — use with caution, as this may allow the agent to make changes without confirmation",
-				},
+				{ value: "off", name: "Off", description: "Disabled" },
+				{ value: "on", name: "On", description: "Enabled" },
+			],
+		});
+
+		options.push({
+			id: SKIP_PERMISSIONS_CONFIG_ID,
+			name: "Skip Permissions",
+			description: "Auto-approve all tool permission requests (dangerous)",
+			category: "_safety",
+			type: "select",
+			currentValue: session.skipPermissions ? "on" : "off",
+			options: [
+				{ value: "off", name: "Off", description: "Disabled" },
+				{ value: "on", name: "On", description: "Enabled" },
 			],
 		});
 
 		return options;
+	}
+}
+
+function coerceConfigValue(value: unknown): string {
+	if (typeof value === "string") return value;
+	if (typeof value === "boolean") return value ? "on" : "off";
+	return "";
+}
+
+function parseOnOff(value: string): boolean | null {
+	switch (value) {
+		case "on":
+		case "true":
+		case "1":
+			return true;
+		case "off":
+		case "false":
+		case "0":
+			return false;
+		default:
+			return null;
 	}
 }
 

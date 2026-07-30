@@ -49,7 +49,7 @@ describe("agy/process.ts", () => {
 	});
 
 	describe("buildAgyArgs()", () => {
-		it("should build basic args", () => {
+		it("should build basic args with default effort", () => {
 			const args = buildAgyArgs({
 				workingDir: "/cwd",
 				conversationId: null,
@@ -57,7 +57,14 @@ describe("agy/process.ts", () => {
 				permissionMode: null,
 				prompt: "hello",
 			});
-			expect(args).toEqual(["--add-dir", "/cwd", "-p", "hello"]);
+			expect(args).toEqual([
+				"--add-dir",
+				"/cwd",
+				"--effort",
+				"medium",
+				"-p",
+				"hello",
+			]);
 		});
 
 		it("should add additionalDirs", () => {
@@ -76,6 +83,8 @@ describe("agy/process.ts", () => {
 				"/dir1",
 				"--add-dir",
 				"/dir2",
+				"--effort",
+				"medium",
 				"-p",
 				"hello",
 			]);
@@ -95,6 +104,8 @@ describe("agy/process.ts", () => {
 				"/cwd",
 				"--foo",
 				"bar",
+				"--effort",
+				"medium",
 				"-p",
 				"hello",
 			]);
@@ -115,9 +126,48 @@ describe("agy/process.ts", () => {
 				"conv-1",
 				"--model",
 				"model-1",
+				"--effort",
+				"medium",
 				"-p",
 				"hello",
 			]);
+		});
+
+		it("should pass native modes and effort/sandbox/skip flags", () => {
+			const args = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: "plan",
+				effort: "high",
+				sandbox: true,
+				skipPermissions: true,
+				prompt: "hello",
+			});
+			expect(args).toEqual([
+				"--add-dir",
+				"/cwd",
+				"--mode",
+				"plan",
+				"--effort",
+				"high",
+				"--sandbox",
+				"--dangerously-skip-permissions",
+				"-p",
+				"hello",
+			]);
+		});
+
+		it("should pass accept-edits mode", () => {
+			const args = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: "accept-edits",
+				prompt: "hello",
+			});
+			expect(args).toContain("--mode");
+			expect(args).toContain("accept-edits");
 		});
 
 		it("should handle bypass permission modes", () => {
@@ -130,6 +180,7 @@ describe("agy/process.ts", () => {
 					prompt: "hello",
 				});
 				expect(args).toContain("--dangerously-skip-permissions");
+				expect(args).not.toContain("--mode");
 			}
 		});
 

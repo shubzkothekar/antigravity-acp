@@ -6,11 +6,20 @@
 // ACP server owns its state file, and the atomic rename keeps it crash-safe.
 
 import * as fs from "node:fs";
-import { SESSIONS_FILE, STATE_DIR } from "../constants";
+import { DEFAULT_EFFORT, SESSIONS_FILE, STATE_DIR } from "../constants";
 import type { StoredSession } from "../types/session";
 
 interface DiskStore {
 	sessions: Record<string, StoredSession>;
+}
+
+function asBool(value: unknown, fallback = false): boolean {
+	if (typeof value === "boolean") return value;
+	if (value === "on" || value === "true" || value === 1 || value === "1")
+		return true;
+	if (value === "off" || value === "false" || value === 0 || value === "0")
+		return false;
+	return fallback;
 }
 
 /** Normalize a raw session record from disk, supporting both camelCase (current)
@@ -31,7 +40,17 @@ function normalizeSession(raw: Record<string, unknown>): StoredSession {
 	const permissionMode =
 		(raw.permissionMode as string | null | undefined) ??
 		(raw.permission_mode as string | null | undefined) ??
+		(raw.mode as string | null | undefined) ??
 		null;
+	const effort =
+		(typeof raw.effort === "string" && raw.effort.length > 0
+			? raw.effort
+			: null) ?? DEFAULT_EFFORT;
+	const sandbox = asBool(raw.sandbox, false);
+	const skipPermissions = asBool(
+		raw.skipPermissions ?? raw.skip_permissions,
+		false,
+	);
 	const additionalDirs = Array.isArray(raw.additionalDirs)
 		? (raw.additionalDirs as string[]).filter((d) => typeof d === "string")
 		: [];
@@ -40,6 +59,9 @@ function normalizeSession(raw: Record<string, unknown>): StoredSession {
 		lastStepIdx,
 		modelId,
 		permissionMode,
+		effort,
+		sandbox,
+		skipPermissions,
 		cwd: (raw.cwd as string | undefined) ?? "",
 		additionalDirs,
 		title: (raw.title as string | null | undefined) ?? null,

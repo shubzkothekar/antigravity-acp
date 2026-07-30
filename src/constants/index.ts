@@ -29,17 +29,36 @@ export const MAX_REPLAY_CACHE = 32;
 
 export const MODEL_CONFIG_ID = "model";
 export const MODE_CONFIG_ID = "mode";
+export const EFFORT_CONFIG_ID = "effort";
+export const SANDBOX_CONFIG_ID = "sandbox";
+export const SKIP_PERMISSIONS_CONFIG_ID = "skip_permissions";
+
 export const DEFAULT_MODE_ID = "default";
+export const ACCEPT_EDITS_MODE_ID = "accept-edits";
 export const BYPASS_MODE_ID = "bypassPermissions";
 export const PLAN_MODE_ID = "plan";
 
-export const PLAN_MODE_INJECTION =
-	"<system>\n[PLANNING MODE] You must NOT write, edit, create, move, or execute any files or " +
-	"commands. You may only read, search, and explore. Your response must be a clear.\n" +
-	"Exception: You can run commands and fetch data from the web which lets you explore, read, search and collect " +
-	"more information for creating a plan. " +
-	"You can use a tool to write a step - by - step implementation plan for how to accomplish the following task " +
-	"— strictly do not start implementing it:\n<system>\n";
+export const MODE_VALUES = [
+	DEFAULT_MODE_ID,
+	ACCEPT_EDITS_MODE_ID,
+	PLAN_MODE_ID,
+	BYPASS_MODE_ID,
+] as const;
+
+export const DEFAULT_EFFORT = "medium";
+export const EFFORT_VALUES = ["low", "medium", "high"] as const;
+
+export const ON_OFF_VALUES = ["off", "on"] as const;
+
+/** Modes that map to --dangerously-skip-permissions (legacy + current). */
+export const BYPASS_MODES = new Set([
+	BYPASS_MODE_ID,
+	"bypass",
+	"dontAsk",
+]);
+
+/** Modes passed through to `agy --mode` (default is omitted). */
+export const AGY_NATIVE_MODES = new Set([ACCEPT_EDITS_MODE_ID, PLAN_MODE_ID]);
 
 export const AUTH_METHOD_ID = "agy-agent";
 
