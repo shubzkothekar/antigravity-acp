@@ -73,6 +73,30 @@ describe("SessionStore", () => {
 		expect(restored).toBeNull();
 	});
 
+	test("should split legacy effort-suffixed model ids on load", async () => {
+		fs.writeFileSync(
+			tempFile,
+			JSON.stringify({
+				sessions: {
+					legacy: {
+						conversationId: null,
+						lastStepIdx: -1,
+						modelId: "gemini-3.6-flash-high",
+						permissionMode: null,
+						cwd: "/tmp",
+						additionalDirs: [],
+						title: null,
+						updatedAt: "2026-07-31T00:00:00Z",
+					},
+				},
+			}),
+		);
+
+		const restored = await store.restore("legacy");
+		expect(restored?.modelId).toBe("gemini-3.6-flash");
+		expect(restored?.effort).toBe("high");
+	});
+
 	test("should delete a session", async () => {
 		const sessionId = "test-session-2";
 		const sessionData: StoredSession = {

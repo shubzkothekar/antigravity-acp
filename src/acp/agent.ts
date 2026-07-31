@@ -17,6 +17,13 @@ import type {
 	SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
+import {
+	canonicalizeModelId,
+	type CondensedModel,
+	condenseModels,
+	parseModelsOutput,
+	stripEffortSuffix,
+} from "../agy/models";
 import { discoverModels } from "../agy/process";
 import {
 	ACCEPT_EDITS_MODE_ID,
@@ -65,7 +72,8 @@ export class AgyAcpAgent {
 	private readonly sessions: SessionManager;
 	private readonly adapter: Adapter;
 	private readonly replayCache = new ReplayCache();
-	private availableModels: string[] = [];
+	/** Condensed UI catalog (one entry per base model). */
+	private availableModels: CondensedModel[] = [];
 	// Tracks which AcpClient is serving each session so async updates can be pushed.
 	private readonly activeClients = new Map<string, AcpClient>();
 
@@ -76,14 +84,14 @@ export class AgyAcpAgent {
 			conversationsDir: config.conversationsDir,
 			workingDir: config.workingDir,
 			skipNarration: config.skipNarration,
+			getModels: () => this.availableModels,
 		});
 		// Attempt to load models from cache immediately for fast startup.
 		try {
 			if (fs.existsSync(MODELS_CACHE_FILE)) {
 				const cached = JSON.parse(fs.readFileSync(MODELS_CACHE_FILE, "utf-8"));
-				if (Array.isArray(cached) && cached.length > 0) {
-					this.availableModels = cached;
-				}
+				const models = loadCachedModels(cached);
+				if (models.length > 0) this.availableModels = models;
 			}
 		} catch {
 			// ignore
@@ -333,9 +341,15 @@ export class AgyAcpAgent {
 		const session = await this.requireSession(sessionId);
 
 		switch (params.configId) {
-			case MODEL_CONFIG_ID:
-				session.modelId = value;
+			case MODEL_CONFIG_ID: {
+				// Store base id; effort is applied when resolving backend --model.
+				session.modelId = canonicalizeModelId(value, this.availableModels);
+				// If the client sent an effort-suffixed id and effort wasn't set
+				// explicitly, adopt the suffix as the session effort.
+				const fromValue = stripEffortSuffix(value).effort;
+				if (fromValue) session.effort = fromValue;
 				break;
+			}
 			case MODE_CONFIG_ID: {
 				// Canonicalize first so legacy aliases (bypassPermissions, etc.) work.
 				const canonical = canonicalizeMode(value, false, false);
@@ -530,23 +544,33 @@ export class AgyAcpAgent {
 		});
 
 		if (models.length > 0) {
+			// Normalize legacy effort-suffixed session values to base ids for the UI.
 			const currentModel =
-				session.modelId ?? models[0] ?? "Gemini 3.5 Flash (Medium)";
+				canonicalizeModelId(session.modelId, models) ??
+				models[0]!.id;
+			if (session.modelId !== currentModel) {
+				session.modelId = currentModel;
+			}
 			options.push({
 				id: MODEL_CONFIG_ID,
 				name: "Model",
-				description: "Model used for this session",
+				description:
+					"Model used for this session (effort selected separately)",
 				category: "model",
 				type: "select",
 				currentValue: currentModel,
-				options: models.map((name) => ({ value: name, name })),
+				options: models.map((m) => ({
+					value: m.id,
+					name: m.name,
+				})),
 			});
 		}
 
 		options.push({
 			id: EFFORT_CONFIG_ID,
 			name: "Effort",
-			description: "Reasoning effort / thinking level",
+			description:
+				"Reasoning effort / thinking level (combined with Model for agy --model)",
 			category: "thought_level",
 			type: "select",
 			currentValue: session.effort || DEFAULT_EFFORT,
@@ -574,6 +598,28 @@ function coerceConfigValue(value: unknown): string {
 	if (typeof value === "string") return value;
 	if (typeof value === "boolean") return value ? "on" : "off";
 	return "";
+}
+
+/** Load condensed models from cache (new shape or legacy string[] of backend ids). */
+function loadCachedModels(cached: unknown): CondensedModel[] {
+	if (!Array.isArray(cached) || cached.length === 0) return [];
+
+	// New cache: CondensedModel[]
+	if (
+		typeof cached[0] === "object" &&
+		cached[0] !== null &&
+		"id" in (cached[0] as object)
+	) {
+		return cached as CondensedModel[];
+	}
+
+	// Legacy cache: string[] of backend ids (and occasionally full lines).
+	if (typeof cached[0] === "string") {
+		const lines = (cached as string[]).filter((s) => typeof s === "string");
+		return condenseModels(parseModelsOutput(lines.join("\n")));
+	}
+
+	return [];
 }
 
 function parseOnOff(value: string): boolean | null {

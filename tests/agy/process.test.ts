@@ -14,16 +14,21 @@ describe("agy/process.ts", () => {
 	});
 
 	describe("discoverModels()", () => {
-		it("should return model ids on success (exit code 0)", async () => {
+		it("should return condensed models on success (exit code 0)", async () => {
 			const mockCapture = spyOn(procUtils, "runCapture").mockResolvedValue({
 				exitCode: 0,
-				stdout: "model-1\nmodel-2\n  model-3  \n\n",
+				stdout:
+					"model-1-high Model One (High)\nmodel-1-low Model One (Low)\nmodel-2 Model Two\n",
 				stderr: "",
 			});
 
 			const models = await discoverModels("dummy-binary");
 			expect(mockCapture).toHaveBeenCalledWith("dummy-binary", ["models"]);
-			expect(models).toEqual(["model-1", "model-2", "model-3"]);
+			expect(models.map((m) => m.id)).toEqual(["model-1", "model-2"]);
+			expect(models[0]?.variants).toEqual({
+				high: "model-1-high",
+				low: "model-1-low",
+			});
 		});
 
 		it("should return empty array on non-zero exit code", async () => {
@@ -110,11 +115,24 @@ describe("agy/process.ts", () => {
 			]);
 		});
 
-		it("should add conversationId and modelId", () => {
+		it("should add conversationId and resolve modelId + effort", () => {
 			const args = buildAgyArgs({
 				workingDir: "/cwd",
 				conversationId: "conv-1",
-				modelId: "model-1",
+				modelId: "gemini-3.6-flash",
+				models: [
+					{
+						id: "gemini-3.6-flash",
+						name: "Gemini 3.6 Flash",
+						variants: {
+							high: "gemini-3.6-flash-high",
+							medium: "gemini-3.6-flash-medium",
+							low: "gemini-3.6-flash-low",
+						},
+						fixedIds: [],
+					},
+				],
+				effort: "high",
 				permissionMode: null,
 				prompt: "hello",
 			});
@@ -124,12 +142,24 @@ describe("agy/process.ts", () => {
 				"--conversation",
 				"conv-1",
 				"--model",
-				"model-1",
+				"gemini-3.6-flash-high",
 				"--effort",
-				"medium",
+				"high",
 				"-p",
 				"hello",
 			]);
+		});
+
+		it("should synthesize backend model id when catalog is empty", () => {
+			const args = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: "model-1",
+				permissionMode: null,
+				prompt: "hello",
+			});
+			expect(args).toContain("--model");
+			expect(args).toContain("model-1-medium");
 		});
 
 		it("should expand plan mode + effort", () => {

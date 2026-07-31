@@ -131,8 +131,8 @@ auto-downloads `agy` on first launch if not present next to the executable.
     - `accept-tools` → `--dangerously-skip-permissions` (tool prompts only)
     - `accept-edits-tools` → `--mode accept-edits` + `--dangerously-skip-permissions`
     - Legacy aliases still accepted: `bypassPermissions` → `accept-tools`, `accept-edits-unsafe` → `accept-edits-tools`
-  - `model`: from `agy models`
-  - `effort`: `low` | `medium` | `high` (default `medium`) → `agy --effort`
+  - `model`: from `agy models`, condensed to one entry per base model (effort suffixes like `-high` / `(High)` stripped from the menu)
+  - `effort`: `low` | `medium` | `high` (default `medium`) → `agy --effort`, and combined with `model` to pick the backend `--model` id (e.g. `gemini-3.6-flash` + `high` → `gemini-3.6-flash-high`)
   - Legacy `sandbox` / `skip_permissions` config ids are still accepted and folded into a Mode preset.
 - **session/load** — replays full conversation history from the `agy` SQLite DB,
   including tool calls, thought chunks, task/permission/error decorators, and title updates.

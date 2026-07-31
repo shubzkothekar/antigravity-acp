@@ -6,6 +6,7 @@
 // ACP server owns its state file, and the atomic rename keeps it crash-safe.
 
 import * as fs from "node:fs";
+import { stripEffortSuffix } from "../agy/models";
 import {
 	canonicalizeMode,
 	DEFAULT_EFFORT,
@@ -41,10 +42,13 @@ function normalizeSession(raw: Record<string, unknown>): StoredSession {
 		(raw.lastStepIdx as number | undefined) ??
 		(raw.last_step_idx as number | undefined) ??
 		-1;
-	const modelId =
+	const rawModelId =
 		(raw.modelId as string | null | undefined) ??
 		(raw.model_id as string | null | undefined) ??
 		null;
+	// Legacy sessions may store effort-suffixed backend ids (e.g. gemini-…-high).
+	const modelParts = rawModelId ? stripEffortSuffix(rawModelId) : null;
+	const modelId = modelParts ? modelParts.baseId || null : null;
 	const rawMode =
 		(raw.permissionMode as string | null | undefined) ??
 		(raw.permission_mode as string | null | undefined) ??
@@ -53,7 +57,9 @@ function normalizeSession(raw: Record<string, unknown>): StoredSession {
 	const effort =
 		(typeof raw.effort === "string" && raw.effort.length > 0
 			? raw.effort
-			: null) ?? DEFAULT_EFFORT;
+			: null) ??
+		modelParts?.effort ??
+		DEFAULT_EFFORT;
 	const legacySandbox = asBool(raw.sandbox, false);
 	const legacySkip = asBool(
 		raw.skipPermissions ?? raw.skip_permissions,

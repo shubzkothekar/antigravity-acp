@@ -7,6 +7,7 @@ import {
 	detectSwallowedAgyError,
 	snapshotAgyLogs,
 } from "../agy/logScan";
+import type { CondensedModel } from "../agy/models";
 import { buildAgyArgs, extraArgsFromEnv, spawnAgy } from "../agy/process";
 import { POLL_INTERVAL_MS } from "../constants";
 import { conversationSnapshot } from "../conversation/scan";
@@ -31,6 +32,8 @@ export interface AdapterConfig {
 	conversationsDir: string;
 	workingDir: string;
 	skipNarration: boolean;
+	/** Live condensed model catalog for model+effort → backend id mapping. */
+	getModels?: () => CondensedModel[];
 }
 
 export class Adapter {
@@ -80,6 +83,7 @@ export class Adapter {
 			additionalDirs: session.additionalDirs,
 			conversationId: session.conversationId,
 			modelId: session.modelId,
+			models: this.config.getModels?.() ?? [],
 			permissionMode: session.permissionMode,
 			effort: session.effort,
 			sandbox: session.sandbox,

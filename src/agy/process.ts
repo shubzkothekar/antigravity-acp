@@ -2,16 +2,20 @@
 
 import { DEFAULT_EFFORT, resolveModeFlags } from "../constants";
 import { runCapture, spawnProcess, type SpawnedProcess } from "../utils/process";
+import {
+	type CondensedModel,
+	modelsFromAgyOutput,
+	resolveBackendModelId,
+} from "./models";
 
-/** Query agy for the list of available model ids (empty on any failure). */
-export async function discoverModels(binary: string): Promise<string[]> {
+/** Query agy for available models, condensed one-per-base (empty on failure). */
+export async function discoverModels(
+	binary: string,
+): Promise<CondensedModel[]> {
 	try {
 		const { exitCode, stdout } = await runCapture(binary, ["models"]);
 		if (exitCode !== 0) return [];
-		return stdout
-			.split("\n")
-			.map((line) => line.trim())
-			.filter((line) => line.length > 0);
+		return modelsFromAgyOutput(stdout).condensed;
 	} catch {
 		return [];
 	}
@@ -22,7 +26,13 @@ export interface AgyArgsOptions {
 	/** Extra workspace roots to add via --add-dir (in addition to workingDir). */
 	additionalDirs?: string[];
 	conversationId: string | null;
+	/**
+	 * UI / session model id (base id without effort suffix). Resolved against
+	 * `models` + `effort` into the backend `--model` value.
+	 */
 	modelId: string | null;
+	/** Condensed catalog used to map model + effort → backend id. */
+	models?: CondensedModel[];
 	/**
 	 * Agent mode preset. Expanded via `resolveModeFlags` into `--mode`,
 	 * `--sandbox`, and/or `--dangerously-skip-permissions`.
@@ -53,12 +63,18 @@ export function buildAgyArgs(opts: AgyArgsOptions): string[] {
 	}
 	if (opts.extraArgs?.length) args.push(...opts.extraArgs);
 	if (opts.conversationId) args.push("--conversation", opts.conversationId);
-	if (opts.modelId) args.push("--model", opts.modelId);
+
+	const effort = opts.effort?.trim() || DEFAULT_EFFORT;
+	const backendModel = resolveBackendModelId(
+		opts.modelId,
+		effort,
+		opts.models ?? [],
+	);
+	if (backendModel) args.push("--model", backendModel);
 
 	const flags = resolveModeFlags(opts.permissionMode);
 	if (flags.agyMode) args.push("--mode", flags.agyMode);
 
-	const effort = opts.effort?.trim() || DEFAULT_EFFORT;
 	args.push("--effort", effort);
 
 	// Mode preset is authoritative; legacy explicit flags still enable if set.

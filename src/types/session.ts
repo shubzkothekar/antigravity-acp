@@ -11,7 +11,10 @@ export interface Session {
 	conversationId: string | null;
 	/** Highest step idx already streamed/replayed to the client. */
 	lastStepIdx: number;
-	/** Selected model id, or null for agy's default. */
+	/**
+	 * Selected base model id (no effort suffix), or null for agy's default.
+	 * Combined with `effort` when invoking `agy --model`.
+	 */
 	modelId: string | null;
 	/**
 	 * Agent mode preset (UI source of truth for edit policy + safety):
