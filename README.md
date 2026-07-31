@@ -121,13 +121,19 @@ auto-downloads `agy` on first launch if not present next to the executable.
 
 - **initialize** — advertises `loadSession`, streaming, `additionalDirectories`,
   `list`/`delete`/`resume`/`close`, `embeddedContext`, and text prompts.
-- **session/new** — accepts `cwd` and `additionalDirectories`; returns the session configuration options (modes, models, effort, sandbox, skip permissions).
+- **session/new** — accepts `cwd` and `additionalDirectories`; returns the session configuration options (Agent Mode, model, effort).
 - **session/set_config_option** — persisted per session:
-  - `mode`: `default` | `accept-edits` | `plan` | `bypassPermissions` (legacy skip alias)
+  - `mode` (**Agent Mode**): policy + safety preset, expanded to `agy` flags:
+    - `default` — review before writes
+    - `accept-edits` → `--mode accept-edits`
+    - `plan` → `--mode plan`
+    - `sandbox` → `--sandbox`
+    - `accept-tools` → `--dangerously-skip-permissions` (tool prompts only)
+    - `accept-edits-tools` → `--mode accept-edits` + `--dangerously-skip-permissions`
+    - Legacy aliases still accepted: `bypassPermissions` → `accept-tools`, `accept-edits-unsafe` → `accept-edits-tools`
   - `model`: from `agy models`
   - `effort`: `low` | `medium` | `high` (default `medium`) → `agy --effort`
-  - `sandbox`: `off` | `on` → `agy --sandbox`
-  - `skip_permissions`: `off` | `on` → `agy --dangerously-skip-permissions`
+  - Legacy `sandbox` / `skip_permissions` config ids are still accepted and folded into a Mode preset.
 - **session/load** — replays full conversation history from the `agy` SQLite DB,
   including tool calls, thought chunks, task/permission/error decorators, and title updates.
 - **session/resume** — re-attaches a client and re-sends `available_commands_update` and `config_option_update` notifications.

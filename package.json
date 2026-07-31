@@ -1,7 +1,7 @@
 {
   "name": "antigravity-acp",
   "description": "An Agent Client Protocol (ACP) server for Google Antigravity's `agy` CLI. Runs on Node via tsx (npx) or Bun. Connects ACP-compatible editors to drive `agy` with live streaming and history replay.",
-  "version": "1.1.0",
+"version": "1.2.0",
   "module": "index.ts",
   "type": "module",
   "engines": {

@@ -48,7 +48,8 @@ describe("SessionStore", () => {
 			modelId: "model-x",
 			permissionMode: "plan",
 			effort: "high",
-			sandbox: true,
+			// Derived from mode on load; plan => no sandbox/skip.
+			sandbox: false,
 			skipPermissions: false,
 			cwd: "/path/to/cwd",
 			additionalDirs: ["/path/to/dir"],

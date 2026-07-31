@@ -7,13 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-07-31
+
 ### Added
-- Node.js / `npx` support via `tsx` (no TypeScript compile step): `npx antigravity-acp` / `npx agy-acp`.
-- `better-sqlite3` and Node `child_process`/stream helpers so the server is not Bun-only at runtime.
+- Agent Mode presets that fold safety into Mode: `sandbox`, `accept-tools` (`--dangerously-skip-permissions`), `accept-edits-tools` (`--mode accept-edits` + skip-permissions).
+- Clearer Mode choice labels with Unicode markers (Plan 📋, Sandboxed 🔒, Accept Tools ⚡, Accept Edits + Tools ⚠️).
 
 ### Changed
-- Package `bin` entries point at `bin/agy-acp.mjs`, which registers tsx and loads `index.ts`.
-- `postinstall` and `start` scripts use `tsx` (Bun still available via `start:bun` and compile targets).
+- Removed separate Sandbox / Skip Permissions config dropdowns from the default UI; legacy config ids still work and are canonicalized into Mode.
+- Renamed mode ids for clarity: `accept-tools` (was `bypassPermissions`), `accept-edits-tools` (was `accept-edits-unsafe`); old ids remain aliases.
 
 ### Added
 - Session config options ported from agy-acp: `effort` (`low`|`medium`|`high`), `sandbox`, and dedicated `skip_permissions`, plus mode value `accept-edits`.

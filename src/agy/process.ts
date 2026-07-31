@@ -1,10 +1,6 @@
 // Spawning and querying the agy CLI.
 
-import {
-	AGY_NATIVE_MODES,
-	BYPASS_MODES,
-	DEFAULT_EFFORT,
-} from "../constants";
+import { DEFAULT_EFFORT, resolveModeFlags } from "../constants";
 import { runCapture, spawnProcess, type SpawnedProcess } from "../utils/process";
 
 /** Query agy for the list of available model ids (empty on any failure). */
@@ -27,13 +23,22 @@ export interface AgyArgsOptions {
 	additionalDirs?: string[];
 	conversationId: string | null;
 	modelId: string | null;
-	/** Mode: default | accept-edits | plan | bypassPermissions (legacy skip). */
+	/**
+	 * Agent mode preset. Expanded via `resolveModeFlags` into `--mode`,
+	 * `--sandbox`, and/or `--dangerously-skip-permissions`.
+	 */
 	permissionMode: string | null;
 	/** Reasoning effort low|medium|high (default medium). */
 	effort?: string | null;
-	/** Pass --sandbox when true. */
+	/**
+	 * @deprecated Prefer encoding safety in `permissionMode`. Still OR'd with
+	 * the mode-derived sandbox flag for old callers/sessions.
+	 */
 	sandbox?: boolean;
-	/** Pass --dangerously-skip-permissions when true. */
+	/**
+	 * @deprecated Prefer encoding safety in `permissionMode`. Still OR'd with
+	 * the mode-derived skip flag for old callers/sessions.
+	 */
 	skipPermissions?: boolean;
 	prompt: string;
 	/** Extra args from $AGY_EXTRA_ARGS, already split. */
@@ -50,20 +55,17 @@ export function buildAgyArgs(opts: AgyArgsOptions): string[] {
 	if (opts.conversationId) args.push("--conversation", opts.conversationId);
 	if (opts.modelId) args.push("--model", opts.modelId);
 
-	const mode = opts.permissionMode;
-	if (mode && AGY_NATIVE_MODES.has(mode)) {
-		args.push("--mode", mode);
-	}
+	const flags = resolveModeFlags(opts.permissionMode);
+	if (flags.agyMode) args.push("--mode", flags.agyMode);
 
 	const effort = opts.effort?.trim() || DEFAULT_EFFORT;
 	args.push("--effort", effort);
 
-	if (opts.sandbox) args.push("--sandbox");
-
-	const skip =
-		Boolean(opts.skipPermissions) ||
-		(mode != null && BYPASS_MODES.has(mode));
-	if (skip) args.push("--dangerously-skip-permissions");
+	// Mode preset is authoritative; legacy explicit flags still enable if set.
+	if (flags.sandbox || opts.sandbox) args.push("--sandbox");
+	if (flags.skipPermissions || opts.skipPermissions) {
+		args.push("--dangerously-skip-permissions");
+	}
 
 	args.push("-p", opts.prompt);
 	return args;

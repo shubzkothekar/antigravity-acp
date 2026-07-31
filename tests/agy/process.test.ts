@@ -132,15 +132,13 @@ describe("agy/process.ts", () => {
 			]);
 		});
 
-		it("should pass native modes and effort/sandbox/skip flags", () => {
+		it("should expand plan mode + effort", () => {
 			const args = buildAgyArgs({
 				workingDir: "/cwd",
 				conversationId: null,
 				modelId: null,
 				permissionMode: "plan",
 				effort: "high",
-				sandbox: true,
-				skipPermissions: true,
 				prompt: "hello",
 			});
 			expect(args).toEqual([
@@ -150,8 +148,6 @@ describe("agy/process.ts", () => {
 				"plan",
 				"--effort",
 				"high",
-				"--sandbox",
-				"--dangerously-skip-permissions",
 				"-p",
 				"hello",
 			]);
@@ -167,10 +163,30 @@ describe("agy/process.ts", () => {
 			});
 			expect(args).toContain("--mode");
 			expect(args).toContain("accept-edits");
+			expect(args).not.toContain("--sandbox");
+			expect(args).not.toContain("--dangerously-skip-permissions");
 		});
 
-		it("should handle bypass permission modes", () => {
-			for (const mode of ["bypassPermissions", "bypass", "dontAsk"]) {
+		it("should map sandbox mode to --sandbox", () => {
+			const args = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: "sandbox",
+				prompt: "hello",
+			});
+			expect(args).toContain("--sandbox");
+			expect(args).not.toContain("--mode");
+			expect(args).not.toContain("--dangerously-skip-permissions");
+		});
+
+		it("should map accept-tools (and legacy aliases) to skip-permissions only", () => {
+			for (const mode of [
+				"accept-tools",
+				"bypassPermissions",
+				"bypass",
+				"dontAsk",
+			]) {
 				const args = buildAgyArgs({
 					workingDir: "/cwd",
 					conversationId: null,
@@ -183,6 +199,36 @@ describe("agy/process.ts", () => {
 			}
 		});
 
+		it("should map accept-edits-tools (and legacy) to mode + skip-permissions", () => {
+			for (const mode of ["accept-edits-tools", "accept-edits-unsafe"]) {
+				const args = buildAgyArgs({
+					workingDir: "/cwd",
+					conversationId: null,
+					modelId: null,
+					permissionMode: mode,
+					prompt: "hello",
+				});
+				expect(args).toContain("--mode");
+				expect(args).toContain("accept-edits");
+				expect(args).toContain("--dangerously-skip-permissions");
+				expect(args).not.toContain("--sandbox");
+			}
+		});
+
+		it("should still honor legacy explicit sandbox/skip flags", () => {
+			const args = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: "default",
+				sandbox: true,
+				skipPermissions: true,
+				prompt: "hello",
+			});
+			expect(args).toContain("--sandbox");
+			expect(args).toContain("--dangerously-skip-permissions");
+		});
+
 		it("should not skip permissions for unknown modes", () => {
 			const args = buildAgyArgs({
 				workingDir: "/cwd",
@@ -192,6 +238,7 @@ describe("agy/process.ts", () => {
 				prompt: "hello",
 			});
 			expect(args).not.toContain("--dangerously-skip-permissions");
+			expect(args).not.toContain("--sandbox");
 		});
 	});
 

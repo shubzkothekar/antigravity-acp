@@ -1,4 +1,9 @@
-import { DEFAULT_EFFORT } from "../constants";
+import {
+	canonicalizeMode,
+	DEFAULT_EFFORT,
+	DEFAULT_MODE_ID,
+	resolveModeFlags,
+} from "../constants";
 
 /** In-memory session state for a live ACP session. */
 export interface Session {
@@ -9,15 +14,21 @@ export interface Session {
 	/** Selected model id, or null for agy's default. */
 	modelId: string | null;
 	/**
-	 * Agent mode: `default` | `accept-edits` | `plan` | `bypassPermissions`.
-	 * `null` means default. `bypassPermissions` is a legacy alias for skip-permissions.
+	 * Agent mode preset (UI source of truth for edit policy + safety):
+	 * `default` | `accept-edits` | `plan` | `sandbox` | `accept-tools` |
+	 * `accept-edits-tools`. `null` means default.
 	 */
 	permissionMode: string | null;
 	/** Reasoning effort: `low` | `medium` | `high`. */
 	effort: string;
-	/** Whether to pass `--sandbox` to agy. */
+	/**
+	 * Derived cache of `--sandbox` from the mode preset (kept for persistence
+	 * compatibility; prefer `permissionMode` + `resolveModeFlags`).
+	 */
 	sandbox: boolean;
-	/** Whether to pass `--dangerously-skip-permissions` to agy. */
+	/**
+	 * Derived cache of `--dangerously-skip-permissions` from the mode preset.
+	 */
 	skipPermissions: boolean;
 	/** Working directory for this session (from session/new cwd param). */
 	cwd: string;
@@ -31,6 +42,16 @@ export interface Session {
 
 /** The persisted subset of a session, written to sessions.json. */
 export type StoredSession = Session;
+
+/** Apply a mode preset and sync derived sandbox/skipPermissions fields. */
+export function applyModePreset(session: Session, mode: string | null): void {
+	const canonical = canonicalizeMode(mode, false, false);
+	session.permissionMode =
+		canonical === DEFAULT_MODE_ID ? null : canonical;
+	const flags = resolveModeFlags(canonical);
+	session.sandbox = flags.sandbox;
+	session.skipPermissions = flags.skipPermissions;
+}
 
 /** Create a fresh, unbound session. */
 export function newSession(

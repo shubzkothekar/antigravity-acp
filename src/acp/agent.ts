@@ -20,9 +20,11 @@ import { RequestError } from "@agentclientprotocol/sdk";
 import { discoverModels } from "../agy/process";
 import {
 	ACCEPT_EDITS_MODE_ID,
+	ACCEPT_EDITS_TOOLS_MODE_ID,
+	ACCEPT_TOOLS_MODE_ID,
 	AUTH_METHOD_ID,
 	AVAILABLE_COMMANDS,
-	BYPASS_MODE_ID,
+	canonicalizeMode,
 	DEFAULT_EFFORT,
 	DEFAULT_MODE_ID,
 	EFFORT_CONFIG_ID,
@@ -32,13 +34,15 @@ import {
 	MODEL_CONFIG_ID,
 	MODELS_CACHE_FILE,
 	PLAN_MODE_ID,
+	resolveModeFlags,
 	SANDBOX_CONFIG_ID,
+	SANDBOX_MODE_ID,
 	SKIP_PERMISSIONS_CONFIG_ID,
 	STATE_DIR,
 } from "../constants";
 import { ReplayCache } from "../conversation/replay";
 import { SessionStore } from "../store/sessionStore";
-import { newSession, type Session } from "../types/session";
+import { applyModePreset, newSession, type Session } from "../types/session";
 import { Adapter } from "./adapter";
 import type { AcpClient } from "./client";
 import { SessionManager } from "./sessions";
@@ -332,17 +336,18 @@ export class AgyAcpAgent {
 			case MODEL_CONFIG_ID:
 				session.modelId = value;
 				break;
-			case MODE_CONFIG_ID:
-				if (!(MODE_VALUES as readonly string[]).includes(value)) {
+			case MODE_CONFIG_ID: {
+				// Canonicalize first so legacy aliases (bypassPermissions, etc.) work.
+				const canonical = canonicalizeMode(value, false, false);
+				if (!(MODE_VALUES as readonly string[]).includes(canonical)) {
 					throw RequestError.invalidParams(
 						undefined,
 						`invalid mode '${value}' (valid: ${MODE_VALUES.join(", ")})`,
 					);
 				}
-				session.permissionMode = value;
-				// Keep skipPermissions in sync when using the legacy bypass mode value.
-				if (value === BYPASS_MODE_ID) session.skipPermissions = true;
+				applyModePreset(session, canonical);
 				break;
+			}
 			case EFFORT_CONFIG_ID:
 				if (!(EFFORT_VALUES as readonly string[]).includes(value)) {
 					throw RequestError.invalidParams(
@@ -352,6 +357,7 @@ export class AgyAcpAgent {
 				}
 				session.effort = value;
 				break;
+			// Legacy independent safety knobs: fold into a Mode preset.
 			case SANDBOX_CONFIG_ID: {
 				const on = parseOnOff(value);
 				if (on === null) {
@@ -360,7 +366,10 @@ export class AgyAcpAgent {
 						`invalid sandbox '${value}' (valid: off, on)`,
 					);
 				}
-				session.sandbox = on;
+				applyModePreset(
+					session,
+					canonicalizeMode(session.permissionMode, on, session.skipPermissions),
+				);
 				break;
 			}
 			case SKIP_PERMISSIONS_CONFIG_ID: {
@@ -371,7 +380,10 @@ export class AgyAcpAgent {
 						`invalid skip_permissions '${value}' (valid: off, on)`,
 					);
 				}
-				session.skipPermissions = on;
+				applyModePreset(
+					session,
+					canonicalizeMode(session.permissionMode, session.sandbox, on),
+				);
 				break;
 			}
 			default:
@@ -464,21 +476,18 @@ export class AgyAcpAgent {
 		const options: SessionConfigOption[] = [];
 		const models = this.availableModels;
 
-		// Order matches agy-acp priority: mode, model, effort, sandbox, skip_permissions.
-		const pm = session.permissionMode;
-		const currentMode =
-			pm === BYPASS_MODE_ID
-				? BYPASS_MODE_ID
-				: pm === PLAN_MODE_ID
-					? PLAN_MODE_ID
-					: pm === ACCEPT_EDITS_MODE_ID
-						? ACCEPT_EDITS_MODE_ID
-						: DEFAULT_MODE_ID;
+		// Mode is the single policy/safety control; model + effort stay separate.
+		const currentMode = canonicalizeMode(
+			session.permissionMode,
+			session.sandbox,
+			session.skipPermissions,
+		);
 
 		options.push({
 			id: MODE_CONFIG_ID,
-			name: "Mode",
-			description: "Controls how the agent applies edits and requests review",
+			name: "Agent Mode",
+			description:
+				"Edit policy and safety profile (mapped to agy --mode / --sandbox / skip-permissions)",
 			category: "mode",
 			type: "select",
 			currentValue: currentMode,
@@ -491,18 +500,31 @@ export class AgyAcpAgent {
 				{
 					value: ACCEPT_EDITS_MODE_ID,
 					name: "Accept Edits",
-					description: "Apply file edits automatically",
+					description:
+						"Apply file edits automatically (agy --mode accept-edits)",
 				},
 				{
 					value: PLAN_MODE_ID,
-					name: "Plan",
+					name: "Plan 📋",
 					description: "Plan without applying edits (agy --mode plan)",
 				},
 				{
-					value: BYPASS_MODE_ID,
-					name: "Skip Permissions (legacy)",
+					value: SANDBOX_MODE_ID,
+					name: "Sandboxed 🔒",
 					description:
-						"Legacy alias for enabling skip-permissions; prefer the Skip Permissions toggle",
+						"Default edit policy with OS sandbox (agy --sandbox)",
+				},
+				{
+					value: ACCEPT_TOOLS_MODE_ID,
+					name: "Accept Tools ⚡",
+					description:
+						"Auto-approve tool permission prompts only (agy --dangerously-skip-permissions)",
+				},
+				{
+					value: ACCEPT_EDITS_TOOLS_MODE_ID,
+					name: "Accept Edits + Tools ⚠️",
+					description:
+						"Auto-apply edits and auto-approve tool permissions (agy --mode accept-edits --dangerously-skip-permissions)",
 				},
 			],
 		});
@@ -539,31 +561,10 @@ export class AgyAcpAgent {
 			],
 		});
 
-		options.push({
-			id: SANDBOX_CONFIG_ID,
-			name: "Sandbox",
-			description: "Run tool commands in the OS sandbox",
-			category: "_safety",
-			type: "select",
-			currentValue: session.sandbox ? "on" : "off",
-			options: [
-				{ value: "off", name: "Off", description: "Disabled" },
-				{ value: "on", name: "On", description: "Enabled" },
-			],
-		});
-
-		options.push({
-			id: SKIP_PERMISSIONS_CONFIG_ID,
-			name: "Skip Permissions",
-			description: "Auto-approve all tool permission requests (dangerous)",
-			category: "_safety",
-			type: "select",
-			currentValue: session.skipPermissions ? "on" : "off",
-			options: [
-				{ value: "off", name: "Off", description: "Disabled" },
-				{ value: "on", name: "On", description: "Enabled" },
-			],
-		});
+		// Keep derived flags in sync for persistence / old clients reading them.
+		const flags = resolveModeFlags(currentMode);
+		session.sandbox = flags.sandbox;
+		session.skipPermissions = flags.skipPermissions;
 
 		return options;
 	}

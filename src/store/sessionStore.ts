@@ -6,7 +6,14 @@
 // ACP server owns its state file, and the atomic rename keeps it crash-safe.
 
 import * as fs from "node:fs";
-import { DEFAULT_EFFORT, SESSIONS_FILE, STATE_DIR } from "../constants";
+import {
+	canonicalizeMode,
+	DEFAULT_EFFORT,
+	DEFAULT_MODE_ID,
+	resolveModeFlags,
+	SESSIONS_FILE,
+	STATE_DIR,
+} from "../constants";
 import type { StoredSession } from "../types/session";
 import { readFileText, writeFile } from "../utils/process";
 
@@ -38,7 +45,7 @@ function normalizeSession(raw: Record<string, unknown>): StoredSession {
 		(raw.modelId as string | null | undefined) ??
 		(raw.model_id as string | null | undefined) ??
 		null;
-	const permissionMode =
+	const rawMode =
 		(raw.permissionMode as string | null | undefined) ??
 		(raw.permission_mode as string | null | undefined) ??
 		(raw.mode as string | null | undefined) ??
@@ -47,11 +54,16 @@ function normalizeSession(raw: Record<string, unknown>): StoredSession {
 		(typeof raw.effort === "string" && raw.effort.length > 0
 			? raw.effort
 			: null) ?? DEFAULT_EFFORT;
-	const sandbox = asBool(raw.sandbox, false);
-	const skipPermissions = asBool(
+	const legacySandbox = asBool(raw.sandbox, false);
+	const legacySkip = asBool(
 		raw.skipPermissions ?? raw.skip_permissions,
 		false,
 	);
+	// Fold legacy independent safety flags into a single Mode preset.
+	const canonical = canonicalizeMode(rawMode, legacySandbox, legacySkip);
+	const flags = resolveModeFlags(canonical);
+	const permissionMode =
+		canonical === DEFAULT_MODE_ID ? null : canonical;
 	const additionalDirs = Array.isArray(raw.additionalDirs)
 		? (raw.additionalDirs as string[]).filter((d) => typeof d === "string")
 		: [];
@@ -61,8 +73,8 @@ function normalizeSession(raw: Record<string, unknown>): StoredSession {
 		modelId,
 		permissionMode,
 		effort,
-		sandbox,
-		skipPermissions,
+		sandbox: flags.sandbox,
+		skipPermissions: flags.skipPermissions,
 		cwd: (raw.cwd as string | undefined) ?? "",
 		additionalDirs,
 		title: (raw.title as string | null | undefined) ?? null,
