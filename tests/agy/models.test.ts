@@ -112,6 +112,25 @@ describe("agy/models.ts", () => {
 				variants: {},
 			});
 		});
+
+		it("strips effort from id-only cache rows (no human labels)", () => {
+			const condensed = condenseModels(
+				parseModelsOutput(
+					[
+						"gemini-3.6-flash-high",
+						"gemini-3.6-flash-medium",
+						"gemini-3.6-flash-low",
+						"gpt-oss-120b-medium",
+						"claude-sonnet-4-6",
+					].join("\n"),
+				),
+			);
+			expect(condensed.map((m) => ({ id: m.id, name: m.name }))).toEqual([
+				{ id: "gemini-3.6-flash", name: "gemini-3.6-flash" },
+				{ id: "gpt-oss-120b", name: "gpt-oss-120b" },
+				{ id: "claude-sonnet-4-6", name: "claude-sonnet-4-6" },
+			]);
+		});
 	});
 
 	describe("canonicalizeModelId()", () => {

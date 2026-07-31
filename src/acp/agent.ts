@@ -22,6 +22,7 @@ import {
 	type CondensedModel,
 	condenseModels,
 	parseModelsOutput,
+	stripEffortLabel,
 	stripEffortSuffix,
 } from "../agy/models";
 import { discoverModels } from "../agy/process";
@@ -604,13 +605,14 @@ function coerceConfigValue(value: unknown): string {
 function loadCachedModels(cached: unknown): CondensedModel[] {
 	if (!Array.isArray(cached) || cached.length === 0) return [];
 
-	// New cache: CondensedModel[]
+	// New cache: CondensedModel[] — still re-sanitize names in case an older
+	// build wrote effort-suffixed labels into the cache.
 	if (
 		typeof cached[0] === "object" &&
 		cached[0] !== null &&
 		"id" in (cached[0] as object)
 	) {
-		return cached as CondensedModel[];
+		return sanitizeCondensedModels(cached as CondensedModel[]);
 	}
 
 	// Legacy cache: string[] of backend ids (and occasionally full lines).
@@ -620,6 +622,26 @@ function loadCachedModels(cached: unknown): CondensedModel[] {
 	}
 
 	return [];
+}
+
+/** Ensure cached condensed entries never surface effort in id/name. */
+function sanitizeCondensedModels(models: CondensedModel[]): CondensedModel[] {
+	return models.map((m) => {
+		const { baseId } = stripEffortSuffix(m.id);
+		const nameFromLabel = stripEffortLabel(m.name || "");
+		const nameStripped = stripEffortSuffix(nameFromLabel || baseId);
+		const name =
+			nameStripped.effort || !nameFromLabel || nameFromLabel === m.id
+				? baseId
+				: nameFromLabel;
+		return {
+			...m,
+			id: baseId || m.id,
+			name,
+			variants: m.variants ?? {},
+			fixedIds: m.fixedIds ?? [],
+		};
+	});
 }
 
 function parseOnOff(value: string): boolean | null {

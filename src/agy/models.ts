@@ -53,6 +53,23 @@ export function stripEffortLabel(name: string): string {
 }
 
 /**
+ * UI label for a catalog row after condensation.
+ * Handles both human labels ("Gemini 3.6 Flash (High)") and id-only cache
+ * rows ("gemini-3.6-flash-high") so effort never remains in the menu name.
+ */
+export function uiModelName(entry: ModelEntry, baseId: string): string {
+	let name = stripEffortLabel(entry.name.trim() || entry.id);
+
+	// Id-shaped names: strip -low|-medium|-high and fall back to base id.
+	const fromId = stripEffortSuffix(name);
+	if (fromId.effort) {
+		name = fromId.baseId;
+	}
+	if (!name || name === entry.id) name = baseId;
+	return name;
+}
+
+/**
  * Parse `agy models` stdout.
  * Supports:
  * - `id` only
@@ -87,22 +104,24 @@ export function condenseModels(entries: ModelEntry[]): CondensedModel[] {
 
 	for (const entry of entries) {
 		const { baseId, effort } = stripEffortSuffix(entry.id);
+		const label = uiModelName(entry, baseId);
 		let condensed = byBase.get(baseId);
 		if (!condensed) {
 			condensed = {
 				id: baseId,
-				name: stripEffortLabel(entry.name) || baseId,
+				name: label,
 				variants: {},
 				fixedIds: [],
 			};
 			byBase.set(baseId, condensed);
 			order.push(baseId);
 		} else if (
-			// Prefer a cleaner display name if we only had the bare id before.
-			condensed.name === condensed.id &&
-			stripEffortLabel(entry.name) !== entry.id
+			// Prefer a human label over a bare/base id when one appears later.
+			(condensed.name === condensed.id || condensed.name === baseId) &&
+			label !== baseId &&
+			label !== entry.id
 		) {
-			condensed.name = stripEffortLabel(entry.name) || condensed.name;
+			condensed.name = label;
 		}
 
 		if (effort) {

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.1] - 2026-07-31
+
+### Fixed
+- Model menu no longer shows effort suffixes when loading legacy id-only caches (e.g. `gemini-3.6-flash-high` → `gemini-3.6-flash` / `Gemini 3.6 Flash`).
+
 ## [1.3.0] - 2026-07-31
 
 ### Changed
