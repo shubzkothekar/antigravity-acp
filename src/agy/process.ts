@@ -35,8 +35,7 @@ export interface AgyArgsOptions {
 	extraArgs?: string[];
 }
 
-/** Build the agy CLI argument vector for a single prompt turn. */
-export function buildAgyArgs(opts: AgyArgsOptions): string[] {
+function buildCommonAgyArgs(opts: AgyArgsOptions): string[] {
 	const args = ["--add-dir", opts.workingDir];
 	for (const dir of opts.additionalDirs ?? []) {
 		args.push("--add-dir", dir);
@@ -47,7 +46,21 @@ export function buildAgyArgs(opts: AgyArgsOptions): string[] {
 	if (opts.permissionMode && BYPASS_MODES.has(opts.permissionMode)) {
 		args.push("--dangerously-skip-permissions");
 	}
+	return args;
+}
+
+/** Build the agy CLI argument vector for a single, non-interactive prompt turn. */
+export function buildAgyArgs(opts: AgyArgsOptions): string[] {
+	const args = buildCommonAgyArgs(opts);
 	args.push("-p", opts.prompt);
+	return args;
+}
+
+/** Build the agy CLI argument vector for a long-lived interactive session.
+ *  The first prompt is supplied on startup; later prompts are sent through the PTY. */
+export function buildInteractiveAgyArgs(opts: AgyArgsOptions): string[] {
+	const args = buildCommonAgyArgs(opts);
+	args.push("--prompt-interactive", opts.prompt);
 	return args;
 }
 

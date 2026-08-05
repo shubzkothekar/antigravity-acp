@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Reuse one PTY-backed `agy --prompt-interactive` process per ACP session, avoiding repeated CLI startup on subsequent prompts.
+- Add `AGY_PERSISTENT=0` as a one-shot compatibility fallback and `AGY_PROMPT_TIMEOUT_MS` for interactive turn timeouts.
+
+### Fixed
+- Use the actual non-`v` GitHub release tag when auto-downloading `agy`.
+- Close persistent `agy` processes when ACP sessions are closed or deleted.
+
 ## [1.0.0] - 2026-06-29
 
 ### Added

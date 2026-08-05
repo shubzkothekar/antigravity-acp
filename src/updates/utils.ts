@@ -150,7 +150,7 @@ export function toDisplayPath(filePath: string, cwd?: string): string {
 		resolvedFile.startsWith(resolvedCwd + path.sep) ||
 		resolvedFile === resolvedCwd
 	) {
-		return path.relative(resolvedCwd, resolvedFile);
+		return path.relative(resolvedCwd, resolvedFile).split(path.sep).join("/");
 	}
 	return filePath;
 }

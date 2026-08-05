@@ -50,7 +50,7 @@ describe("agy/installer.ts", () => {
 	describe("releaseUrl()", () => {
 		it("should format the URL correctly", () => {
 			expect(releaseUrl("my-asset.zip")).toBe(
-				`https://github.com/${GITHUB_REPO}/releases/download/v${AGY_VERSION}/my-asset.zip`,
+				`https://github.com/${GITHUB_REPO}/releases/download/${AGY_VERSION}/my-asset.zip`,
 			);
 		});
 	});

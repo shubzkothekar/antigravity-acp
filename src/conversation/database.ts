@@ -86,8 +86,9 @@ export class ConversationDb {
 		const dbPath = conversationDbPath(dir, id);
 		if (!fs.existsSync(dbPath)) return null;
 
+		let db: Database | null = null;
 		try {
-			const db = new Database(dbPath, { readonly: true });
+			db = new Database(dbPath, { readonly: true });
 			const hasSteps = db
 				.query(
 					"SELECT COUNT(*) > 0 AS present FROM sqlite_master WHERE type='table' AND name='steps'",
@@ -102,6 +103,7 @@ export class ConversationDb {
 			}
 			return new ConversationDb(db, db.query(SELECT_ROWS));
 		} catch {
+			db?.close();
 			return null;
 		}
 	}
