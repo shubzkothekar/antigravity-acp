@@ -71,3 +71,25 @@ export function extraArgsFromEnv(): string[] {
 	const raw = process.env.AGY_EXTRA_ARGS;
 	return raw ? raw.split(/\s+/).filter((s) => s.length > 0) : [];
 }
+
+/** Execute a non-interactive agy command (print mode `-p`) and capture stdout. */
+export async function runNonInteractivePrompt(
+	binary: string,
+	prompt: string,
+	cwd?: string,
+): Promise<string> {
+	try {
+		const proc = Bun.spawn([binary, "-p", prompt], {
+			cwd,
+			stdin: "ignore",
+			stdout: "pipe",
+			stderr: "ignore",
+		});
+		const text = await new Response(proc.stdout).text();
+		const exitCode = await proc.exited;
+		if (exitCode !== 0) return "";
+		return text.trim();
+	} catch {
+		return "";
+	}
+}
