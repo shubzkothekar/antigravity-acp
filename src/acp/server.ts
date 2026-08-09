@@ -47,6 +47,18 @@ export function runAcp() {
 				new AcpClient(ctx.client),
 			),
 		)
+		.onRequest(methods.agent.session.list, (ctx) =>
+			agentImpl.listSessions(ctx.params as { cwd?: string }),
+		)
+		.onRequest(methods.agent.session.delete, (ctx) =>
+			agentImpl.deleteSession(ctx.params as { sessionId?: string }),
+		)
+		.onRequest(methods.agent.session.close, (ctx) =>
+			agentImpl.closeSession(ctx.params as { sessionId?: string }),
+		)
+		.onRequest(methods.agent.session.setMode, (ctx) =>
+			agentImpl.setMode(ctx.params as { sessionId?: string; modeId?: string }),
+		)
 		.onRequest(methods.agent.session.resume, (ctx) =>
 			agentImpl.resumeSession(
 				ctx.params as {
@@ -56,15 +68,6 @@ export function runAcp() {
 				},
 				new AcpClient(ctx.client),
 			),
-		)
-		.onRequest(methods.agent.session.list, (ctx) =>
-			agentImpl.listSessions(ctx.params as { cwd?: string }),
-		)
-		.onRequest(methods.agent.session.delete, (ctx) =>
-			agentImpl.deleteSession(ctx.params as { sessionId?: string }),
-		)
-		.onRequest(methods.agent.session.close, (ctx) =>
-			agentImpl.closeSession(ctx.params as { sessionId?: string }),
 		)
 		.onRequest(methods.agent.session.prompt, (ctx) =>
 			agentImpl.prompt(ctx.params, new AcpClient(ctx.client)),
@@ -77,6 +80,7 @@ export function runAcp() {
 		)
 		.onRequest("prompts/list", raw<unknown>(), () => agentImpl.listPrompts())
 		.onRequest("tools/list", raw<unknown>(), () => agentImpl.listTools())
+		// NOTE: if AcpClient exposes executeTool, we would bind it here.
 		.onNotification(methods.agent.session.cancel, (ctx) =>
 			agentImpl.cancel(ctx.params),
 		)
