@@ -15,6 +15,7 @@ import type {
 	ResumeSessionResponse,
 	SessionConfigOption,
 	SetSessionConfigOptionResponse,
+	SetSessionModeResponse,
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
 import {
@@ -254,6 +255,7 @@ export class AgyAcpAgent {
 			.map((entry) => ({
 				sessionId: entry.sessionId,
 				cwd: entry.session.cwd || this.config.workingDir,
+				additionalDirectories: entry.session.additionalDirs,
 				title: entry.session.title ?? null,
 				updatedAt: entry.session.updatedAt ?? null,
 			}));
@@ -325,6 +327,22 @@ export class AgyAcpAgent {
 
 	cancel(params: { sessionId?: string }): void {
 		if (params.sessionId) this.adapter.cancel(params.sessionId);
+	}
+
+	/** SDK-native mode setter (session/set_mode). */
+	async setMode(params: {
+		sessionId?: string;
+		modeId?: string;
+	}): Promise<SetSessionModeResponse> {
+		if (!params.modeId) {
+			throw RequestError.invalidParams(undefined, "missing modeId");
+		}
+		await this.setConfigOption({
+			sessionId: params.sessionId,
+			configId: MODE_CONFIG_ID,
+			value: params.modeId,
+		});
+		return {};
 	}
 
 	/** SDK-native config setter (session/set_config_option). */
