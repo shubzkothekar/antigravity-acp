@@ -25,7 +25,11 @@ describe("agy/process.ts", () => {
 				stdout: "pipe",
 				stderr: "ignore",
 			});
-			expect(models).toEqual(["model-1", "model-2", "model-3"]);
+			expect(models).toEqual([
+				{ value: "model-1", name: "model-1" },
+				{ value: "model-2", name: "model-2" },
+				{ value: "model-3", name: "model-3" },
+			]);
 		});
 
 		it("should return empty array on non-zero exit code", async () => {

@@ -2,9 +2,14 @@
 
 const BYPASS_MODES = new Set(["bypassPermissions", "bypass", "dontAsk"]);
 
-/** Query agy for the list of available model ids (empty on any failure).
+export interface DiscoveredModel {
+	value: string;
+	name: string;
+}
+
+/** Query agy for the list of available models (empty on any failure).
  *  Uses async spawn to avoid blocking the event loop (~5s for `agy models`). */
-export async function discoverModels(binary: string): Promise<string[]> {
+export async function discoverModels(binary: string): Promise<DiscoveredModel[]> {
 	try {
 		const proc = Bun.spawn([binary, "models"], {
 			stdin: "ignore",
@@ -17,7 +22,13 @@ export async function discoverModels(binary: string): Promise<string[]> {
 		return text
 			.split("\n")
 			.map((line) => line.trim())
-			.filter((line) => line.length > 0);
+			.filter((line) => line.length > 0)
+			.map((line) => {
+				const parts = line.split(/\s+/);
+				const value = parts[0] ?? "";
+				const name = parts.length > 1 ? parts.slice(1).join(" ") : value;
+				return { value, name };
+			});
 	} catch {
 		return [];
 	}

@@ -17,7 +17,7 @@ import type {
 	SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
-import { discoverModels } from "../agy/process";
+import { type DiscoveredModel, discoverModels } from "../agy/process";
 import {
 	AUTH_METHOD_ID,
 	AVAILABLE_COMMANDS,
@@ -55,7 +55,7 @@ export class AgyAcpAgent {
 	private readonly sessions: SessionManager;
 	private readonly adapter: Adapter;
 	private readonly replayCache = new ReplayCache();
-	private availableModels: string[] = [];
+	private availableModels: DiscoveredModel[] = [];
 	// Tracks which AcpClient is serving each session so async updates can be pushed.
 	private readonly activeClients = new Map<string, AcpClient>();
 
@@ -72,7 +72,10 @@ export class AgyAcpAgent {
 			if (fs.existsSync(MODELS_CACHE_FILE)) {
 				const cached = JSON.parse(fs.readFileSync(MODELS_CACHE_FILE, "utf-8"));
 				if (Array.isArray(cached) && cached.length > 0) {
-					this.availableModels = cached;
+					// Normalize cached items to DiscoveredModel structure for backwards compatibility with legacy string[] cache files.
+					this.availableModels = cached.map((item: any) =>
+						typeof item === "string" ? { value: item, name: item } : item,
+					);
 				}
 			}
 		} catch {
@@ -411,14 +414,14 @@ export class AgyAcpAgent {
 
 		if (models.length > 0) {
 			const currentModel =
-				session.modelId ?? models[0] ?? "Gemini 3.5 Flash (Medium)";
+				session.modelId ?? models[0]?.value ?? "gemini-3.6-flash-medium";
 			options.push({
 				id: MODEL_CONFIG_ID,
 				name: "Model",
 				category: "model",
 				type: "select",
 				currentValue: currentModel,
-				options: models.map((name) => ({ value: name, name })),
+				options: models.map((m) => ({ value: m.value, name: m.name })),
 			});
 		}
 
