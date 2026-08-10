@@ -6,11 +6,29 @@
 // ACP server owns its state file, and the atomic rename keeps it crash-safe.
 
 import * as fs from "node:fs";
-import { SESSIONS_FILE, STATE_DIR } from "../constants";
+import { stripEffortSuffix } from "../agy/models";
+import {
+	canonicalizeMode,
+	DEFAULT_EFFORT,
+	DEFAULT_MODE_ID,
+	resolveModeFlags,
+	SESSIONS_FILE,
+	STATE_DIR,
+} from "../constants";
 import type { StoredSession } from "../types/session";
+import { readFileText, writeFile } from "../utils/process";
 
 interface DiskStore {
 	sessions: Record<string, StoredSession>;
+}
+
+function asBool(value: unknown, fallback = false): boolean {
+	if (typeof value === "boolean") return value;
+	if (value === "on" || value === "true" || value === 1 || value === "1")
+		return true;
+	if (value === "off" || value === "false" || value === 0 || value === "0")
+		return false;
+	return fallback;
 }
 
 /** Normalize a raw session record from disk, supporting both camelCase (current)
@@ -24,14 +42,34 @@ function normalizeSession(raw: Record<string, unknown>): StoredSession {
 		(raw.lastStepIdx as number | undefined) ??
 		(raw.last_step_idx as number | undefined) ??
 		-1;
-	const modelId =
+	const rawModelId =
 		(raw.modelId as string | null | undefined) ??
 		(raw.model_id as string | null | undefined) ??
 		null;
-	const permissionMode =
+	// Legacy sessions may store effort-suffixed backend ids (e.g. gemini-…-high).
+	const modelParts = rawModelId ? stripEffortSuffix(rawModelId) : null;
+	const modelId = modelParts ? modelParts.baseId || null : null;
+	const rawMode =
 		(raw.permissionMode as string | null | undefined) ??
 		(raw.permission_mode as string | null | undefined) ??
+		(raw.mode as string | null | undefined) ??
 		null;
+	const effort =
+		(typeof raw.effort === "string" && raw.effort.length > 0
+			? raw.effort
+			: null) ??
+		modelParts?.effort ??
+		DEFAULT_EFFORT;
+	const legacySandbox = asBool(raw.sandbox, false);
+	const legacySkip = asBool(
+		raw.skipPermissions ?? raw.skip_permissions,
+		false,
+	);
+	// Fold legacy independent safety flags into a single Mode preset.
+	const canonical = canonicalizeMode(rawMode, legacySandbox, legacySkip);
+	const flags = resolveModeFlags(canonical);
+	const permissionMode =
+		canonical === DEFAULT_MODE_ID ? null : canonical;
 	const additionalDirs = Array.isArray(raw.additionalDirs)
 		? (raw.additionalDirs as string[]).filter((d) => typeof d === "string")
 		: [];
@@ -40,6 +78,9 @@ function normalizeSession(raw: Record<string, unknown>): StoredSession {
 		lastStepIdx,
 		modelId,
 		permissionMode,
+		effort,
+		sandbox: flags.sandbox,
+		skipPermissions: flags.skipPermissions,
 		cwd: (raw.cwd as string | undefined) ?? "",
 		additionalDirs,
 		title: (raw.title as string | null | undefined) ?? null,
@@ -83,7 +124,7 @@ export class SessionStore {
 				delete store.sessions[sessionId];
 				fs.mkdirSync(this.dir, { recursive: true });
 				const tmp = `${this.file}.tmp`;
-				await Bun.write(tmp, JSON.stringify(store, null, 2));
+				await writeFile(tmp, JSON.stringify(store, null, 2));
 				fs.renameSync(tmp, this.file);
 			})
 			.catch((err) => {
@@ -109,7 +150,7 @@ export class SessionStore {
 
 	private async load(): Promise<DiskStore> {
 		try {
-			const parsed = JSON.parse(await Bun.file(this.file).text()) as {
+			const parsed = JSON.parse(await readFileText(this.file)) as {
 				sessions?: Record<string, Record<string, unknown>>;
 			};
 			const raw = parsed.sessions ?? {};
@@ -131,7 +172,7 @@ export class SessionStore {
 		store.sessions[sessionId] = session;
 		fs.mkdirSync(this.dir, { recursive: true });
 		const tmp = `${this.file}.tmp`;
-		await Bun.write(tmp, JSON.stringify(store, null, 2));
+		await writeFile(tmp, JSON.stringify(store, null, 2));
 		fs.renameSync(tmp, this.file);
 	}
 }

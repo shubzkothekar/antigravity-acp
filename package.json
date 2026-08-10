@@ -1,14 +1,18 @@
 {
   "name": "antigravity-acp",
-  "description": "An Agent Client Protocol (ACP) server for Google Antigravity's `agy` CLI, built on Bun. Connects ACP-compatible editors to drive `agy` with live streaming and history replay.",
-  "version": "1.0.0",
+  "description": "An Agent Client Protocol (ACP) server for Google Antigravity's `agy` CLI. Runs on Node via tsx (npx) or Bun. Connects ACP-compatible editors to drive `agy` with live streaming and history replay.",
+"version": "1.3.1",
   "module": "index.ts",
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "bin": {
-    "agy-acp": "index.ts",
-    "antigravity-acp": "index.ts"
+    "agy-acp": "bin/agy-acp.mjs",
+    "antigravity-acp": "bin/agy-acp.mjs"
   },
   "files": [
+    "bin",
     "index.ts",
     "src",
     "scripts",
@@ -17,8 +21,9 @@
     "CHANGELOG.md"
   ],
   "scripts": {
-    "start": "bun run index.ts",
-    "postinstall": "bun scripts/postinstall.ts",
+    "start": "tsx index.ts",
+    "start:bun": "bun run index.ts",
+    "postinstall": "tsx scripts/postinstall.ts",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "lint": "biome lint .",
@@ -34,6 +39,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.5.1",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/bun": "latest"
   },
   "peerDependencies": {
@@ -41,7 +47,9 @@
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "^1.0.0",
-    "@bufbuild/protobuf": "^2.12.1"
+    "@bufbuild/protobuf": "^2.12.1",
+    "better-sqlite3": "^13.0.2",
+    "tsx": "^4.23.1"
   },
   "repository": {
     "type": "git",

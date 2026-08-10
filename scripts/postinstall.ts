@@ -1,15 +1,20 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 // Download the agy binary from GitHub Releases for the current platform.
-// Runs automatically after `bun install` / `npm install` via the postinstall hook.
+// Runs automatically after install via the postinstall hook (tsx/node).
 //
 // When cutting a new agy-acp release, update AGY_VERSION and the sha256 fields
 // in src/agy/installer.ts (the sha256 values come from the GitHub release page).
 
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { ensureAgy } from "../src/agy/installer";
 
 // scripts/ lives at {pkg}/scripts/ → bin/ is a sibling of scripts/
-const binDir = path.resolve(import.meta.dir, "..", "bin");
+const here =
+	typeof (import.meta as ImportMeta & { dir?: string }).dir === "string"
+		? (import.meta as ImportMeta & { dir: string }).dir
+		: path.dirname(fileURLToPath(import.meta.url));
+const binDir = path.resolve(here, "..", "bin");
 
 ensureAgy({
 	destDir: binDir,

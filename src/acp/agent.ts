@@ -15,24 +15,43 @@ import type {
 	ResumeSessionResponse,
 	SessionConfigOption,
 	SetSessionConfigOptionResponse,
+	SetSessionModeResponse,
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
+import {
+	canonicalizeModelId,
+	type CondensedModel,
+	condenseModels,
+	parseModelsOutput,
+	stripEffortLabel,
+	stripEffortSuffix,
+} from "../agy/models";
 import { discoverModels } from "../agy/process";
 import {
+	ACCEPT_EDITS_MODE_ID,
+	ACCEPT_EDITS_TOOLS_MODE_ID,
+	ACCEPT_TOOLS_MODE_ID,
 	AUTH_METHOD_ID,
 	AVAILABLE_COMMANDS,
-	BYPASS_MODE_ID,
+	canonicalizeMode,
+	DEFAULT_EFFORT,
 	DEFAULT_MODE_ID,
+	EFFORT_CONFIG_ID,
+	EFFORT_VALUES,
 	MODE_CONFIG_ID,
+	MODE_VALUES,
 	MODEL_CONFIG_ID,
 	MODELS_CACHE_FILE,
 	PLAN_MODE_ID,
-	PLAN_MODE_INJECTION,
+	resolveModeFlags,
+	SANDBOX_CONFIG_ID,
+	SANDBOX_MODE_ID,
+	SKIP_PERMISSIONS_CONFIG_ID,
 	STATE_DIR,
 } from "../constants";
 import { ReplayCache } from "../conversation/replay";
 import { SessionStore } from "../store/sessionStore";
-import { newSession, type Session } from "../types/session";
+import { applyModePreset, newSession, type Session } from "../types/session";
 import { Adapter } from "./adapter";
 import type { AcpClient } from "./client";
 import { SessionManager } from "./sessions";
@@ -55,7 +74,8 @@ export class AgyAcpAgent {
 	private readonly sessions: SessionManager;
 	private readonly adapter: Adapter;
 	private readonly replayCache = new ReplayCache();
-	private availableModels: string[] = [];
+	/** Condensed UI catalog (one entry per base model). */
+	private availableModels: CondensedModel[] = [];
 	// Tracks which AcpClient is serving each session so async updates can be pushed.
 	private readonly activeClients = new Map<string, AcpClient>();
 
@@ -66,14 +86,14 @@ export class AgyAcpAgent {
 			conversationsDir: config.conversationsDir,
 			workingDir: config.workingDir,
 			skipNarration: config.skipNarration,
+			getModels: () => this.availableModels,
 		});
 		// Attempt to load models from cache immediately for fast startup.
 		try {
 			if (fs.existsSync(MODELS_CACHE_FILE)) {
 				const cached = JSON.parse(fs.readFileSync(MODELS_CACHE_FILE, "utf-8"));
-				if (Array.isArray(cached) && cached.length > 0) {
-					this.availableModels = cached;
-				}
+				const models = loadCachedModels(cached);
+				if (models.length > 0) this.availableModels = models;
 			}
 		} catch {
 			// ignore
@@ -105,7 +125,12 @@ export class AgyAcpAgent {
 			agentInfo: { name: "Antigravity", version: this.config.version },
 			agentCapabilities: {
 				loadSession: true,
-				promptCapabilities: { embeddedContext: true },
+				// Some hosts read a top-level streaming flag (agy-acp parity).
+				...({ streaming: true } as object),
+				promptCapabilities: {
+					embeddedContext: true,
+					...({ text: true } as object),
+				},
 				sessionCapabilities: {
 					list: {},
 					delete: {},
@@ -124,7 +149,7 @@ export class AgyAcpAgent {
 						"Run `agy` to configure authentication if needed.",
 				},
 			],
-		};
+		} as InitializeResponse;
 	}
 
 	/** ACP authenticate — verify agy binary is accessible (credentials managed by agy). */
@@ -230,6 +255,7 @@ export class AgyAcpAgent {
 			.map((entry) => ({
 				sessionId: entry.sessionId,
 				cwd: entry.session.cwd || this.config.workingDir,
+				additionalDirectories: entry.session.additionalDirs,
 				title: entry.session.title ?? null,
 				updatedAt: entry.session.updatedAt ?? null,
 			}));
@@ -271,11 +297,8 @@ export class AgyAcpAgent {
 			this.sessions.adopt(sessionId, session);
 		}
 
-		const rawText = promptText(params.prompt);
-		const text =
-			session.permissionMode === PLAN_MODE_ID
-				? PLAN_MODE_INJECTION + rawText
-				: rawText;
+		// Plan mode is enforced via `agy --mode plan` (see buildAgyArgs).
+		const text = promptText(params.prompt);
 		const outcome = await this.adapter.runPrompt(
 			sessionId,
 			session,
@@ -295,11 +318,31 @@ export class AgyAcpAgent {
 			await this.sessions.persist(sessionId, session);
 		}
 
-		return { stopReason: outcome.stopReason };
+		// ACP PromptResponse stopReason is typically end_turn | cancelled;
+		// map internal "error" (already thrown above when message present) away.
+		const stopReason =
+			outcome.stopReason === "cancelled" ? "cancelled" : "end_turn";
+		return { stopReason };
 	}
 
 	cancel(params: { sessionId?: string }): void {
 		if (params.sessionId) this.adapter.cancel(params.sessionId);
+	}
+
+	/** SDK-native mode setter (session/set_mode). */
+	async setMode(params: {
+		sessionId?: string;
+		modeId?: string;
+	}): Promise<SetSessionModeResponse> {
+		if (!params.modeId) {
+			throw RequestError.invalidParams(undefined, "missing modeId");
+		}
+		await this.setConfigOption({
+			sessionId: params.sessionId,
+			configId: MODE_CONFIG_ID,
+			value: params.modeId,
+		});
+		return {};
 	}
 
 	/** SDK-native config setter (session/set_config_option). */
@@ -309,23 +352,80 @@ export class AgyAcpAgent {
 		value?: unknown;
 	}): Promise<SetSessionConfigOptionResponse> {
 		const sessionId = this.requireSessionId(params.sessionId);
-		const value = typeof params.value === "string" ? params.value : "";
-		if (
-			params.configId !== MODEL_CONFIG_ID &&
-			params.configId !== MODE_CONFIG_ID
-		) {
-			throw RequestError.invalidParams(
-				undefined,
-				`unknown configId: ${params.configId}`,
-			);
+		const value = coerceConfigValue(params.value);
+		if (!params.configId) {
+			throw RequestError.invalidParams(undefined, "missing configId");
 		}
 		if (!value) throw RequestError.invalidParams(undefined, "missing value");
 		const session = await this.requireSession(sessionId);
-		if (params.configId === MODEL_CONFIG_ID) {
-			session.modelId = value;
-		} else if (params.configId === MODE_CONFIG_ID) {
-			session.permissionMode = value;
+
+		switch (params.configId) {
+			case MODEL_CONFIG_ID: {
+				// Store base id; effort is applied when resolving backend --model.
+				session.modelId = canonicalizeModelId(value, this.availableModels);
+				// If the client sent an effort-suffixed id and effort wasn't set
+				// explicitly, adopt the suffix as the session effort.
+				const fromValue = stripEffortSuffix(value).effort;
+				if (fromValue) session.effort = fromValue;
+				break;
+			}
+			case MODE_CONFIG_ID: {
+				// Canonicalize first so legacy aliases (bypassPermissions, etc.) work.
+				const canonical = canonicalizeMode(value, false, false);
+				if (!(MODE_VALUES as readonly string[]).includes(canonical)) {
+					throw RequestError.invalidParams(
+						undefined,
+						`invalid mode '${value}' (valid: ${MODE_VALUES.join(", ")})`,
+					);
+				}
+				applyModePreset(session, canonical);
+				break;
+			}
+			case EFFORT_CONFIG_ID:
+				if (!(EFFORT_VALUES as readonly string[]).includes(value)) {
+					throw RequestError.invalidParams(
+						undefined,
+						`invalid effort '${value}' (valid: ${EFFORT_VALUES.join(", ")})`,
+					);
+				}
+				session.effort = value;
+				break;
+			// Legacy independent safety knobs: fold into a Mode preset.
+			case SANDBOX_CONFIG_ID: {
+				const on = parseOnOff(value);
+				if (on === null) {
+					throw RequestError.invalidParams(
+						undefined,
+						`invalid sandbox '${value}' (valid: off, on)`,
+					);
+				}
+				applyModePreset(
+					session,
+					canonicalizeMode(session.permissionMode, on, session.skipPermissions),
+				);
+				break;
+			}
+			case SKIP_PERMISSIONS_CONFIG_ID: {
+				const on = parseOnOff(value);
+				if (on === null) {
+					throw RequestError.invalidParams(
+						undefined,
+						`invalid skip_permissions '${value}' (valid: off, on)`,
+					);
+				}
+				applyModePreset(
+					session,
+					canonicalizeMode(session.permissionMode, session.sandbox, on),
+				);
+				break;
+			}
+			default:
+				throw RequestError.invalidParams(
+					undefined,
+					`unknown configId: ${params.configId}`,
+				);
 		}
+
 		await this.sessions.persist(sessionId, session);
 		return { configOptions: this.configOptions(session) };
 	}
@@ -409,56 +509,171 @@ export class AgyAcpAgent {
 		const options: SessionConfigOption[] = [];
 		const models = this.availableModels;
 
-		if (models.length > 0) {
-			const currentModel =
-				session.modelId ?? models[0] ?? "Gemini 3.5 Flash (Medium)";
-			options.push({
-				id: MODEL_CONFIG_ID,
-				name: "Model",
-				category: "model",
-				type: "select",
-				currentValue: currentModel,
-				options: models.map((name) => ({ value: name, name })),
-			});
-		}
-
-		const pm = session.permissionMode;
-		const currentMode =
-			pm === BYPASS_MODE_ID
-				? BYPASS_MODE_ID
-				: pm === PLAN_MODE_ID
-					? PLAN_MODE_ID
-					: DEFAULT_MODE_ID;
+		// Mode is the single policy/safety control; model + effort stay separate.
+		const currentMode = canonicalizeMode(
+			session.permissionMode,
+			session.sandbox,
+			session.skipPermissions,
+		);
 
 		options.push({
 			id: MODE_CONFIG_ID,
-			name: "Mode",
+			name: "Agent Mode",
+			description:
+				"Edit policy and safety profile (mapped to agy --mode / --sandbox / skip-permissions)",
 			category: "mode",
 			type: "select",
 			currentValue: currentMode,
 			options: [
 				{
 					value: DEFAULT_MODE_ID,
-					name: "Standard",
-					description: "Antigravity's standard mode",
+					name: "Default",
+					description: "Request review before applying file writes",
+				},
+				{
+					value: ACCEPT_EDITS_MODE_ID,
+					name: "Accept Edits",
+					description:
+						"Apply file edits automatically (agy --mode accept-edits)",
 				},
 				{
 					value: PLAN_MODE_ID,
-					name: "Plan Mode",
-					description:
-						"Read-only exploration: agent may only read and search, then returns " +
-						"a step-by-step plan without making any changes",
+					name: "Plan 📋",
+					description: "Plan without applying edits (agy --mode plan)",
 				},
 				{
-					value: BYPASS_MODE_ID,
-					name: "Skip Permissions",
+					value: SANDBOX_MODE_ID,
+					name: "Sandboxed 🔒",
 					description:
-						"Run without permission prompts — use with caution, as this may allow the agent to make changes without confirmation",
+						"Default edit policy with OS sandbox (agy --sandbox)",
+				},
+				{
+					value: ACCEPT_TOOLS_MODE_ID,
+					name: "Accept Tools ⚡",
+					description:
+						"Auto-approve tool permission prompts only (agy --dangerously-skip-permissions)",
+				},
+				{
+					value: ACCEPT_EDITS_TOOLS_MODE_ID,
+					name: "Accept Edits + Tools ⚠️",
+					description:
+						"Auto-apply edits and auto-approve tool permissions (agy --mode accept-edits --dangerously-skip-permissions)",
 				},
 			],
 		});
 
+		if (models.length > 0) {
+			// Normalize legacy effort-suffixed session values to base ids for the UI.
+			const currentModel =
+				canonicalizeModelId(session.modelId, models) ??
+				models[0]!.id;
+			if (session.modelId !== currentModel) {
+				session.modelId = currentModel;
+			}
+			options.push({
+				id: MODEL_CONFIG_ID,
+				name: "Model",
+				description:
+					"Model used for this session (effort selected separately)",
+				category: "model",
+				type: "select",
+				currentValue: currentModel,
+				options: models.map((m) => ({
+					value: m.id,
+					name: m.name,
+				})),
+			});
+		}
+
+		options.push({
+			id: EFFORT_CONFIG_ID,
+			name: "Effort",
+			description:
+				"Reasoning effort / thinking level (combined with Model for agy --model)",
+			category: "thought_level",
+			type: "select",
+			currentValue: session.effort || DEFAULT_EFFORT,
+			options: [
+				{ value: "low", name: "Low", description: "Faster, less deliberation" },
+				{
+					value: "medium",
+					name: "Medium",
+					description: "Balanced reasoning effort",
+				},
+				{ value: "high", name: "High", description: "Deeper reasoning" },
+			],
+		});
+
+		// Keep derived flags in sync for persistence / old clients reading them.
+		const flags = resolveModeFlags(currentMode);
+		session.sandbox = flags.sandbox;
+		session.skipPermissions = flags.skipPermissions;
+
 		return options;
+	}
+}
+
+function coerceConfigValue(value: unknown): string {
+	if (typeof value === "string") return value;
+	if (typeof value === "boolean") return value ? "on" : "off";
+	return "";
+}
+
+/** Load condensed models from cache (new shape or legacy string[] of backend ids). */
+function loadCachedModels(cached: unknown): CondensedModel[] {
+	if (!Array.isArray(cached) || cached.length === 0) return [];
+
+	// New cache: CondensedModel[] — still re-sanitize names in case an older
+	// build wrote effort-suffixed labels into the cache.
+	if (
+		typeof cached[0] === "object" &&
+		cached[0] !== null &&
+		"id" in (cached[0] as object)
+	) {
+		return sanitizeCondensedModels(cached as CondensedModel[]);
+	}
+
+	// Legacy cache: string[] of backend ids (and occasionally full lines).
+	if (typeof cached[0] === "string") {
+		const lines = (cached as string[]).filter((s) => typeof s === "string");
+		return condenseModels(parseModelsOutput(lines.join("\n")));
+	}
+
+	return [];
+}
+
+/** Ensure cached condensed entries never surface effort in id/name. */
+function sanitizeCondensedModels(models: CondensedModel[]): CondensedModel[] {
+	return models.map((m) => {
+		const { baseId } = stripEffortSuffix(m.id);
+		const nameFromLabel = stripEffortLabel(m.name || "");
+		const nameStripped = stripEffortSuffix(nameFromLabel || baseId);
+		const name =
+			nameStripped.effort || !nameFromLabel || nameFromLabel === m.id
+				? baseId
+				: nameFromLabel;
+		return {
+			...m,
+			id: baseId || m.id,
+			name,
+			variants: m.variants ?? {},
+			fixedIds: m.fixedIds ?? [],
+		};
+	});
+}
+
+function parseOnOff(value: string): boolean | null {
+	switch (value) {
+		case "on":
+		case "true":
+		case "1":
+			return true;
+		case "off":
+		case "false":
+		case "0":
+			return false;
+		default:
+			return null;
 	}
 }
 

@@ -1,13 +1,14 @@
-// Read-only access to agy's per-conversation SQLite databases (bun:sqlite).
+// Read-only access to agy's per-conversation SQLite databases.
+// Prefers bun:sqlite under Bun; falls back to better-sqlite3 on Node/tsx.
 //
 // A `ConversationDb` keeps one DB handle + prepared statement open so the
 // streaming poll loop can read repeatedly without re-opening the file each
 // tick. One-shot `readRows` is provided for replay, where a single read is all
 // that's needed.
 
-import { Database, type Statement } from "bun:sqlite";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { createRequire } from "node:module";
 import { StepPayload } from "../gen/steps";
 import type { StepRow } from "../types";
 import {
@@ -15,6 +16,8 @@ import {
 	decodePermissions,
 	decodeTaskDetails,
 } from "./columns";
+
+const require = createRequire(import.meta.url);
 
 const SELECT_ROWS =
 	"SELECT idx, step_type, status, step_payload, error_details, permissions, task_details " +
@@ -29,6 +32,58 @@ interface RawRow {
 	permissions: unknown;
 	task_details: unknown;
 }
+
+interface SqliteStatement {
+	all: (...params: unknown[]) => unknown[];
+	get: (...params: unknown[]) => unknown;
+}
+
+interface SqliteDatabase {
+	prepare: (sql: string) => SqliteStatement;
+	close: () => void;
+}
+
+type OpenDatabase = (dbPath: string) => SqliteDatabase;
+
+function createOpenDatabase(): OpenDatabase {
+	// Prefer bun:sqlite when Bun is present to avoid NAPI panics from better-sqlite3.
+	if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
+		try {
+			const { Database } = require("bun:sqlite") as {
+				Database: new (
+					path: string,
+					opts?: { readonly?: boolean },
+				) => {
+					query: (sql: string) => SqliteStatement;
+					close: () => void;
+				};
+			};
+			return (dbPath: string) => {
+				const db = new Database(dbPath, { readonly: true });
+				return {
+					prepare: (sql: string) => db.query(sql),
+					close: () => db.close(),
+				};
+			};
+		} catch {
+			// Fall through.
+		}
+	}
+
+	const BetterSqlite3 = require("better-sqlite3") as typeof import("better-sqlite3");
+	return (dbPath: string) => {
+		const db = new BetterSqlite3(dbPath, {
+			readonly: true,
+			fileMustExist: true,
+		});
+		return {
+			prepare: (sql: string) => db.prepare(sql) as SqliteStatement,
+			close: () => db.close(),
+		};
+	};
+}
+
+const openDatabase = createOpenDatabase();
 
 function toUint8(v: unknown): Uint8Array {
 	if (v instanceof Uint8Array) return v;
@@ -77,8 +132,8 @@ export function statConversation(dir: string, id: string): DbStat | null {
 /** An open, reusable read handle on one conversation's steps table. */
 export class ConversationDb {
 	private constructor(
-		private readonly db: Database,
-		private readonly stmt: Statement,
+		private readonly db: SqliteDatabase,
+		private readonly stmt: SqliteStatement,
 	) {}
 
 	/** Open a conversation DB, or null if missing/unreadable or lacking a steps table. */
@@ -87,20 +142,20 @@ export class ConversationDb {
 		if (!fs.existsSync(dbPath)) return null;
 
 		try {
-			const db = new Database(dbPath, { readonly: true });
+			const db = openDatabase(dbPath);
 			const hasSteps = db
-				.query(
+				.prepare(
 					"SELECT COUNT(*) > 0 AS present FROM sqlite_master WHERE type='table' AND name='steps'",
 				)
-				.get() as { present: number } | undefined;
-			if (!hasSteps?.present) {
+				.get() as { present: number | boolean } | undefined;
+			if (!Boolean(hasSteps?.present)) {
 				db.close();
 				console.error(
 					`[agy-acp] WARN: steps table not found in ${id}.db — schema changed?`,
 				);
 				return null;
 			}
-			return new ConversationDb(db, db.query(SELECT_ROWS));
+			return new ConversationDb(db, db.prepare(SELECT_ROWS));
 		} catch {
 			return null;
 		}

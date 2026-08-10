@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.3.1] - 2026-07-31
+
+### Fixed
+- Model menu no longer shows effort suffixes when loading legacy id-only caches (e.g. `gemini-3.6-flash-high` → `gemini-3.6-flash` / `Gemini 3.6 Flash`).
+
+## [1.3.0] - 2026-07-31
+
+### Changed
+- Model menu is condensed to one entry per base model (effort suffixes removed from labels/ids).
+- Selecting Model + Effort maps to the matching backend `agy --model` id (e.g. `gemini-3.6-flash` + `high` → `gemini-3.6-flash-high`), while still passing `--effort`.
+
+## [1.2.0] - 2026-07-31
+
+### Added
+- Agent Mode presets that fold safety into Mode: `sandbox`, `accept-tools` (`--dangerously-skip-permissions`), `accept-edits-tools` (`--mode accept-edits` + skip-permissions).
+- Clearer Mode choice labels with Unicode markers (Plan 📋, Sandboxed 🔒, Accept Tools ⚡, Accept Edits + Tools ⚠️).
+
+### Changed
+- Removed separate Sandbox / Skip Permissions config dropdowns from the default UI; legacy config ids still work and are canonicalized into Mode.
+- Renamed mode ids for clarity: `accept-tools` (was `bypassPermissions`), `accept-edits-tools` (was `accept-edits-unsafe`); old ids remain aliases.
+
+### Added
+- Session config options ported from agy-acp: `effort` (`low`|`medium`|`high`), `sandbox`, and dedicated `skip_permissions`, plus mode value `accept-edits`.
+- Native `agy` flags for `--mode` (`accept-edits`|`plan`), `--effort`, and `--sandbox`.
+- Live and replay `agent_thought_chunk` streaming from AgentText protobuf field 3.
+- Swallowed-error detection via agy `cli-*.log` when a turn exits successfully with no streamed updates (e.g. quota / RESOURCE_EXHAUSTED).
+- Initialize capability ads for streaming and text prompts.
+
+### Changed
+- Plan mode now uses `agy --mode plan` instead of prompt injection.
+- `bypassPermissions` remains as a legacy mode alias that enables skip-permissions.
+
 ## [1.0.0] - 2026-06-29
 
 ### Added

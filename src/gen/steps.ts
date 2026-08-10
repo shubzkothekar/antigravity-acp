@@ -98,7 +98,10 @@ export interface UserPromptContent {
 }
 
 export interface AgentText {
+	/** Field 1 — visible agent message text. */
 	text: string;
+	/** Field 3 — streamed reasoning / thought text (optional). */
+	thought: string;
 }
 
 export interface TitleUpdate {
@@ -1530,7 +1533,7 @@ export const UserPromptContent: MessageFns<UserPromptContent> = {
 };
 
 function createBaseAgentText(): AgentText {
-	return { text: "" };
+	return { text: "", thought: "" };
 }
 
 export const AgentText: MessageFns<AgentText> = {
@@ -1540,6 +1543,9 @@ export const AgentText: MessageFns<AgentText> = {
 	): BinaryWriter {
 		if (message.text !== "") {
 			writer.uint32(10).string(message.text);
+		}
+		if (message.thought !== "") {
+			writer.uint32(26).string(message.thought);
 		}
 		return writer;
 	},
@@ -1560,6 +1566,14 @@ export const AgentText: MessageFns<AgentText> = {
 					message.text = reader.string();
 					continue;
 				}
+				case 3: {
+					if (tag !== 26) {
+						break;
+					}
+
+					message.thought = reader.string();
+					continue;
+				}
 			}
 			if ((tag & 7) === 4 || tag === 0) {
 				break;
@@ -1570,13 +1584,21 @@ export const AgentText: MessageFns<AgentText> = {
 	},
 
 	fromJSON(object: any): AgentText {
-		return { text: isSet(object.text) ? globalThis.String(object.text) : "" };
+		return {
+			text: isSet(object.text) ? globalThis.String(object.text) : "",
+			thought: isSet(object.thought)
+				? globalThis.String(object.thought)
+				: "",
+		};
 	},
 
 	toJSON(message: AgentText): unknown {
 		const obj: any = {};
 		if (message.text !== "") {
 			obj.text = message.text;
+		}
+		if (message.thought !== "") {
+			obj.thought = message.thought;
 		}
 		return obj;
 	},
@@ -1589,6 +1611,7 @@ export const AgentText: MessageFns<AgentText> = {
 	): AgentText {
 		const message = createBaseAgentText();
 		message.text = object.text ?? "";
+		message.thought = object.thought ?? "";
 		return message;
 	},
 };
