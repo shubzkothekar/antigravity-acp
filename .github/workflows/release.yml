@@ -30,7 +30,7 @@ jobs:
           awk -v ver="[$VERSION]" 'index($0, "## " ver) == 1 {flag=1; next} /^## \[/ {flag=0} flag' CHANGELOG.md > release_notes.md
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           body_path: release_notes.md
           files: |
