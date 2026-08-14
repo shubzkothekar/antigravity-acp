@@ -10,6 +10,9 @@ import { STATE_DIR } from "../constants";
 
 const BYPASS_MODES = new Set(["bypassPermissions", "bypass", "dontAsk"]);
 const LOCK_POLL_INTERVAL_MS = 50;
+const DEFAULT_HANDSHAKE_TIMEOUT_MS = 30_000;
+/** Exit code the proxy uses when it cancels instead of launching agy. */
+const PROXY_CANCELLED_EXIT_CODE = 130;
 export const AGY_PROCESS_PROXY_FLAG = "--internal-agy-process-proxy";
 const AGY_PROCESS_PROXY_READY_FD = "AGY_ACP_PROCESS_PROXY_READY_FD";
 const AGY_PROCESS_PROXY_CONTROL_FD = "AGY_ACP_PROCESS_PROXY_CONTROL_FD";
@@ -269,10 +272,11 @@ export async function runAgyProcessProxy(encoded?: string): Promise<number> {
 			try {
 				fs.writeSync(handshake.ready, "locked\n");
 			} catch {
-				return 130;
+				return PROXY_CANCELLED_EXIT_CODE;
 			}
 			const command = await firstCommand;
-			if (command === null || command === "cancel") return 130;
+			if (command === null || command === "cancel")
+				return PROXY_CANCELLED_EXIT_CODE;
 			if (command !== "start") {
 				throw new Error("invalid agy process proxy command");
 			}
@@ -308,7 +312,8 @@ export async function runAgyProcessProxy(encoded?: string): Promise<number> {
 		}
 		return await child.exited;
 	} catch (error) {
-		if (error instanceof AgyProcessCancelledError) return 130;
+		if (error instanceof AgyProcessCancelledError)
+			return PROXY_CANCELLED_EXIT_CODE;
 		throw error;
 	} finally {
 		release?.();
@@ -370,9 +375,129 @@ export function buildAgyArgs(opts: AgyArgsOptions): string[] {
 	return args;
 }
 
+function handshakeTimeoutMs(): number {
+	const raw = Number(process.env.AGY_ACP_HANDSHAKE_TIMEOUT_MS);
+	return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_HANDSHAKE_TIMEOUT_MS;
+}
+
+/** How long to keep reading the ready pipe after the proxy exits, so a signal
+ *  written immediately before exit is still picked up. */
+const HANDSHAKE_EXIT_GRACE_MS = 250;
+
+const HANDSHAKE_EXITED = Symbol("handshake-exited");
+const HANDSHAKE_TIMED_OUT = Symbol("handshake-timed-out");
+const HANDSHAKE_PIPE_FAILED = Symbol("handshake-pipe-failed");
+
+/** Attempts allowed when the handshake pipes themselves fail to come up. */
+const MAX_HANDSHAKE_ATTEMPTS = 3;
+
+function afterDelay<T>(ms: number, value: T): [Promise<T>, () => void] {
+	let timer: ReturnType<typeof setTimeout>;
+	const promise = new Promise<T>((resolve) => {
+		timer = setTimeout(() => resolve(value), ms);
+	});
+	return [promise, () => clearTimeout(timer)];
+}
+
+/** Await the next handshake line, but give up if the proxy exits or the
+ *  deadline passes instead of waiting on a pipe that may never reach EOF. */
+async function raceHandshake(
+	next: Promise<IteratorResult<string>>,
+	exited: Promise<number>,
+	pipeFailed: Promise<Error>,
+	expected: string,
+	timeoutMs?: number,
+): Promise<IteratorResult<string>> {
+	const contenders: Promise<
+		| IteratorResult<string>
+		| typeof HANDSHAKE_EXITED
+		| typeof HANDSHAKE_TIMED_OUT
+		| typeof HANDSHAKE_PIPE_FAILED
+	>[] = [
+		next,
+		exited.then(
+			() => HANDSHAKE_EXITED,
+			() => HANDSHAKE_EXITED,
+		),
+		pipeFailed.then(() => HANDSHAKE_PIPE_FAILED),
+	];
+	const [deadline, cancelDeadline] =
+		timeoutMs === undefined
+			? [undefined, () => {}]
+			: afterDelay(timeoutMs, HANDSHAKE_TIMED_OUT);
+	if (deadline) contenders.push(deadline);
+
+	try {
+		const outcome = await Promise.race(contenders);
+		if (outcome === HANDSHAKE_TIMED_OUT) {
+			throw new Error(
+				`timed out waiting for agy process proxy ${expected} signal`,
+			);
+		}
+		if (outcome === HANDSHAKE_PIPE_FAILED) {
+			// startAgyProxy turns this into a retryable AgyProxyPipeError.
+			throw await pipeFailed;
+		}
+		if (outcome !== HANDSHAKE_EXITED) return outcome;
+
+		const [grace, cancelGrace] = afterDelay(
+			HANDSHAKE_EXIT_GRACE_MS,
+			HANDSHAKE_EXITED,
+		);
+		try {
+			const flushed = await Promise.race([next, grace]);
+			if (flushed === HANDSHAKE_EXITED) {
+				const code = await exited.catch(() => "error");
+				throw new Error(
+					`agy process proxy exited (code ${code}) before the ${expected} signal`,
+				);
+			}
+			return flushed;
+		} finally {
+			cancelGrace();
+		}
+	} finally {
+		cancelDeadline();
+	}
+}
+
+/** The handshake pipes failed to come up on the bridge side, so the attempt
+ *  never reached agy and is safe to retry. */
+class AgyProxyPipeError extends Error {
+	constructor(cause: Error) {
+		super(`agy process proxy handshake pipe failed: ${cause.message}`);
+		this.name = "AgyProxyPipeError";
+		this.cause = cause;
+	}
+}
+
 /** Spawn agy for a prompt. stdout is ignored (agy persists to its DB); stderr is
- *  piped so the caller can surface failures. */
+ *  piped so the caller can surface failures.
+ *
+ *  The extra stdio pipes carrying the handshake occasionally fail to connect on
+ *  the bridge side under load; the proxy then reads EOF on its control pipe,
+ *  takes that for "the bridge exited" and cancels itself. Nothing has run at
+ *  that point, so retry rather than surfacing a spurious failure. */
 export async function spawnAgy(
+	binary: string,
+	args: string[],
+	cwd: string,
+	signal?: AbortSignal,
+	onLockAcquired?: () => void,
+): Promise<AgySubprocess> {
+	let lastError: AgyProxyPipeError | undefined;
+	for (let attempt = 0; attempt < MAX_HANDSHAKE_ATTEMPTS; attempt++) {
+		try {
+			return await startAgyProxy(binary, args, cwd, signal, onLockAcquired);
+		} catch (error) {
+			if (!(error instanceof AgyProxyPipeError)) throw error;
+			lastError = error;
+		}
+	}
+	throw lastError;
+}
+
+async function startAgyProxy(
 	binary: string,
 	args: string[],
 	cwd: string,
@@ -444,11 +569,41 @@ export async function spawnAgy(
 		subprocess.kill();
 		throw new Error("agy process proxy handshake pipe unavailable");
 	}
+	// A failed pipe emits "error" rather than ever delivering a signal; record it
+	// so the handshake can abandon this attempt immediately (and so the event
+	// does not go unhandled).
+	let pipeError: Error | undefined;
+	let notePipeError: (error: Error) => void = (error) => {
+		pipeError ??= error;
+	};
+	const pipeFailed = new Promise<Error>((resolve) => {
+		notePipeError = (error) => {
+			pipeError ??= error;
+			resolve(pipeError);
+		};
+	});
+	readyStream.on("error", notePipeError);
+	controlStream.on("error", notePipeError);
+	requestStream.on("error", notePipeError);
+
 	requestStream.end(JSON.stringify(request));
 	const lines = createInterface({ input: readyStream });
 	const iterator = lines[Symbol.asyncIterator]();
-	const waitForMessage = async (expected: string): Promise<void> => {
-		const message = await iterator.next();
+	// The proxy's exit closes its copy of the ready pipe, but a lost EOF would
+	// otherwise leave the handshake waiting forever — race exit and, for signals
+	// that are supposed to be prompt, a deadline.
+	const waitForMessage = async (
+		expected: string,
+		timeoutMs?: number,
+	): Promise<void> => {
+		const next = iterator.next();
+		const message = await raceHandshake(
+			next,
+			exited,
+			pipeFailed,
+			expected,
+			timeoutMs,
+		);
 		if (!message.done && message.value.startsWith("error:")) {
 			const encodedError = message.value.slice("error:".length);
 			throw new Error(Buffer.from(encodedError, "base64url").toString("utf8"));
@@ -458,17 +613,43 @@ export async function spawnAgy(
 		}
 	};
 	try {
+		// No deadline on "locked": queueing behind another agy run is unbounded.
 		await waitForMessage("locked");
 		throwIfCancelled(signal);
 		onLockAcquired?.();
 		controlStream.write("start\n");
-		await waitForMessage("ready");
+		await waitForMessage("ready", handshakeTimeoutMs());
 		lines.close();
 		throwIfCancelled(signal);
 	} catch (error) {
 		lines.close();
+		// The handshake never completed, so there is no agy child to shut down
+		// gracefully — terminate the proxy directly rather than asking over an IPC
+		// channel it has already proven unresponsive on.
+		child.kill();
 		if (signal?.aborted) throw new AgyProcessCancelledError();
-		subprocess.kill();
+		if (!pipeError) {
+			// A dying pipe can surface as a silent end-of-stream a tick before it
+			// emits "error"; give it that tick so the failure stays retryable.
+			const [tick, cancelTick] = afterDelay(0, undefined);
+			await Promise.race([pipeFailed, tick]);
+			cancelTick();
+		}
+		if (pipeError) throw new AgyProxyPipeError(pipeError);
+		// The proxy cancels itself when its control pipe reports EOF, which it
+		// reads as "the bridge exited". If we never asked it to cancel and are
+		// still here to see it, that EOF was spurious: the pipe broke rather than
+		// the bridge dying. Nothing has run yet, so let the caller retry.
+		if (!cancelSent && !signal?.aborted) {
+			const [tick, cancelTick] = afterDelay(50, undefined);
+			const code = await Promise.race([exited.catch(() => undefined), tick]);
+			cancelTick();
+			if (code === PROXY_CANCELLED_EXIT_CODE) {
+				throw new AgyProxyPipeError(
+					new Error("proxy cancelled itself during the handshake"),
+				);
+			}
+		}
 		throw error;
 	}
 	return subprocess;
