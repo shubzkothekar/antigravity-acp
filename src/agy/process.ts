@@ -266,9 +266,13 @@ export async function runAgyProcessProxy(encoded?: string): Promise<number> {
 		release = await acquireAgyProcessLock(controller.signal);
 		throwIfCancelled(controller.signal);
 		if (handshake && firstCommand) {
-			fs.writeSync(handshake.ready, "locked\n");
+			try {
+				fs.writeSync(handshake.ready, "locked\n");
+			} catch {
+				return 130;
+			}
 			const command = await firstCommand;
-			if (command === "cancel") return 130;
+			if (command === null || command === "cancel") return 130;
 			if (command !== "start") {
 				throw new Error("invalid agy process proxy command");
 			}
