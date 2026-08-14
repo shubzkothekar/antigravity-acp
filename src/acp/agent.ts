@@ -17,7 +17,8 @@ import type {
 	SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
-import { type DiscoveredModel, discoverModels } from "../agy/process";
+import { type DiscoveredModel, discoverModels, runNonInteractivePrompt } from "../agy/process";
+import { formatUsageOutput } from "../agy/usage-format";
 import {
 	AUTH_METHOD_ID,
 	AVAILABLE_COMMANDS,
@@ -275,6 +276,23 @@ export class AgyAcpAgent {
 		}
 
 		const rawText = promptText(params.prompt);
+		const userText = rawPromptText(params.prompt).trim();
+		if (userText === "/usage" || userText.startsWith("/usage ")) {
+			const output = await runNonInteractivePrompt(
+				this.config.binary,
+				"/usage",
+				session.cwd,
+			);
+			await client.update(sessionId, {
+				sessionUpdate: "agent_message_chunk",
+				content: {
+					type: "text",
+					text: output ? formatUsageOutput(output) : "No usage data available.",
+				},
+			});
+			return { stopReason: "end_turn" };
+		}
+
 		const text =
 			session.permissionMode === PLAN_MODE_ID
 				? PLAN_MODE_INJECTION + rawText
@@ -519,4 +537,18 @@ function stringField(obj: Record<string, unknown>, ...keys: string[]): string {
 		if (typeof obj[key] === "string") return obj[key] as string;
 	}
 	return "";
+}
+
+/** Extract raw user text from ACP prompt blocks without XML tag formatting. */
+function rawPromptText(prompt: unknown): string {
+	const blocks = Array.isArray(prompt) ? prompt : [];
+	const parts: string[] = [];
+	for (const block of blocks) {
+		if (!block || typeof block !== "object") continue;
+		const obj = block as Record<string, unknown>;
+		if (typeof obj.text === "string") {
+			parts.push(obj.text);
+		}
+	}
+	return parts.join("\n").trim();
 }
