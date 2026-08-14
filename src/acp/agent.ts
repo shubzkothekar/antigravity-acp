@@ -18,6 +18,7 @@ import type {
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
 import { discoverModels, runNonInteractivePrompt } from "../agy/process";
+import { formatUsageOutput } from "../agy/usage-format";
 import {
 	AUTH_METHOD_ID,
 	AVAILABLE_COMMANDS,
@@ -283,7 +284,7 @@ export class AgyAcpAgent {
 				sessionUpdate: "agent_message_chunk",
 				content: {
 					type: "text",
-					text: output || "No usage data available.",
+					text: output ? formatUsageOutput(output) : "No usage data available.",
 				},
 			});
 			return { stopReason: "end_turn" };
