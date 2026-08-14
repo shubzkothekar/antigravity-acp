@@ -1,11 +1,16 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { client, methods, ndJsonStream } from "@agentclientprotocol/sdk";
 
 describe("ACP Server E2E", () => {
 	let proc: ReturnType<typeof Bun.spawn>;
 	let connection: any;
+	let stateDir: string;
 
 	beforeAll(async () => {
+		stateDir = mkdtempSync(join(tmpdir(), "agy-acp-e2e-"));
 		proc = Bun.spawn(["bun", "run", "index.ts"], {
 			stdin: "pipe",
 			stdout: "pipe",
@@ -13,6 +18,10 @@ describe("ACP Server E2E", () => {
 			env: {
 				...process.env,
 				AGY_SKIP_DOWNLOAD: "1", // to speed it up and avoid downloading if it tries to
+				// Keep background model discovery off the real `agy` binary and off
+				// the shared default lock, so it can't outlive or slow down the suite.
+				AGY_BIN: join(stateDir, "no-such-agy"),
+				AGY_ACP_LOCK_FILE: join(stateDir, "agy-process-lock.sqlite"),
 			},
 		});
 
@@ -37,6 +46,10 @@ describe("ACP Server E2E", () => {
 		}
 		if (proc) {
 			proc.kill();
+			await proc.exited;
+		}
+		if (stateDir) {
+			rmSync(stateDir, { recursive: true, force: true });
 		}
 	});
 

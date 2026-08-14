@@ -7,8 +7,15 @@ import pkg from "./package.json";
 import { runAcp } from "./src/acp/server";
 import { downloadedAgyPath } from "./src/agy/binary";
 import { ensureAgy } from "./src/agy/installer";
+import { AGY_PROCESS_PROXY_FLAG, runAgyProcessProxy } from "./src/agy/process";
 
 async function main(): Promise<void> {
+	const proxyFlagIndex = process.argv.indexOf(AGY_PROCESS_PROXY_FLAG);
+	if (proxyFlagIndex !== -1) {
+		const encodedRequest = process.argv[proxyFlagIndex + 1];
+		process.exit(await runAgyProcessProxy(encodedRequest));
+	}
+
 	if (process.argv.includes("--version") || process.argv.includes("-v")) {
 		process.stdout.write(`${pkg.version}\n`);
 		process.exit(0);
