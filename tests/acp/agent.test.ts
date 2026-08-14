@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { Adapter } from "../../src/acp/adapter";
 import { AgyAcpAgent } from "../../src/acp/agent";
 import { SessionManager } from "../../src/acp/sessions";
+import * as processUtils from "../../src/agy/process";
 
 const AUTH_METHOD_ID = "agy-agent";
 const _PLAN_MODE_ID = "plan";
@@ -27,6 +28,10 @@ describe("AgyAcpAgent", () => {
 		lockDir = mkdtempSync(join(tmpdir(), "agy-acp-agent-lock-"));
 		process.env.AGY_ACP_LOCK_FILE = join(lockDir, "agy.lock");
 		clientMock = { update: mock(async () => {}) };
+
+		// Stub model discovery: the real one spawns a proxy subprocess whose
+		// entrypoint is Bun.main, i.e. this test file under `bun test`.
+		spyOn(processUtils, "discoverModels").mockResolvedValue([]);
 
 		// Mock SessionManager
 		spyOn(SessionManager.prototype, "create").mockReturnValue({
@@ -133,6 +138,9 @@ describe("AgyAcpAgent", () => {
 		const discoveryExited = new Promise<number>((resolve) => {
 			finishDiscovery = resolve;
 		});
+		// This test drives discovery itself through the mocked Bun.spawn, so undo
+		// the blanket stub from beforeEach.
+		spyOn(processUtils, "discoverModels").mockRestore();
 		spyOn(Bun, "spawn").mockReturnValue({
 			stdout: "gemini-3.6-flash-high\n",
 			exited: discoveryExited,
@@ -165,6 +173,9 @@ describe("AgyAcpAgent", () => {
 		const discoveryExited = new Promise<number>((resolve) => {
 			finishDiscovery = resolve;
 		});
+		// This test drives discovery itself through the mocked Bun.spawn, so undo
+		// the blanket stub from beforeEach.
+		spyOn(processUtils, "discoverModels").mockRestore();
 		spyOn(Bun, "spawn").mockReturnValue({
 			stdout: "gemini-3.6-flash-high\n",
 			exited: discoveryExited,

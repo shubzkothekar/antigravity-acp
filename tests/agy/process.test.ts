@@ -265,6 +265,58 @@ describe("agy/process.ts", () => {
 			expect(mockSpawn).not.toHaveBeenCalled();
 		});
 
+		it("rejects when the proxy exits without a handshake signal", async () => {
+			process.env.AGY_ACP_PROXY_ENTRYPOINT = join(
+				import.meta.dir,
+				"../fixtures/silent-proxy.ts",
+			);
+			const started = performance.now();
+			await expect(
+				spawnAgy(process.execPath, ["prompt"], process.cwd()),
+			).rejects.toThrow(/locked signal/);
+			// The exit race must resolve it, not an open-ended wait on the pipe.
+			expect(performance.now() - started).toBeLessThan(2000);
+		});
+
+		it("retries when the proxy self-cancels during the handshake", async () => {
+			const markerFile = join(lockDir, "agy-launched");
+			process.env.AGY_ACP_PROXY_ENTRYPOINT = join(
+				import.meta.dir,
+				"../fixtures/flaky-proxy.ts",
+			);
+			process.env.AGY_ACP_FLAKY_PROXY_MARKER = join(lockDir, "tripped");
+			try {
+				const child = await spawnAgy(
+					process.execPath,
+					[
+						join(import.meta.dir, "../fixtures/record-agy-launch.ts"),
+						markerFile,
+					],
+					process.cwd(),
+				);
+				expect(await child.exited).toBe(0);
+				expect(existsSync(markerFile)).toBe(true);
+				expect(existsSync(process.env.AGY_ACP_FLAKY_PROXY_MARKER)).toBe(true);
+			} finally {
+				delete process.env.AGY_ACP_FLAKY_PROXY_MARKER;
+			}
+		});
+
+		it("rejects when the proxy never signals ready", async () => {
+			process.env.AGY_ACP_PROXY_ENTRYPOINT = join(
+				import.meta.dir,
+				"../fixtures/stalled-proxy.ts",
+			);
+			process.env.AGY_ACP_HANDSHAKE_TIMEOUT_MS = "200";
+			try {
+				await expect(
+					spawnAgy(process.execPath, ["prompt"], process.cwd()),
+				).rejects.toThrow("timed out waiting for agy process proxy ready");
+			} finally {
+				delete process.env.AGY_ACP_HANDSHAKE_TIMEOUT_MS;
+			}
+		});
+
 		it("continues after a separate lock-holder process dies", async () => {
 			const holder = Bun.spawn(
 				[
