@@ -24,6 +24,9 @@ function stdoutWritable(): WritableStream<Uint8Array> {
 /** Identity parser for raw (non-builtin) ACP methods. */
 const raw = <T>() => ({ parse: (p: unknown) => p as T });
 
+type SetSessionModeParams = { sessionId?: string; modeId?: string };
+type SetSessionModelParams = { sessionId?: string; modelId?: string };
+
 export function runAcp() {
 	const skipNarration = process.argv.includes("--skip-narration");
 
@@ -85,6 +88,24 @@ export function runAcp() {
 		.onRequest(methods.agent.session.setConfigOption, (ctx) =>
 			agentImpl.setConfigOption(ctx.params),
 		)
+		// Compatibility endpoints used by clients that predate the ACP
+		// session/set_config_option method, including Paseo.
+		.onRequest("session/set_mode", raw<SetSessionModeParams>(), async (ctx) => {
+			await agentImpl.setConfigOption({
+				sessionId: ctx.params.sessionId,
+				configId: "mode",
+				value: ctx.params.modeId,
+			});
+			return {};
+		})
+		.onRequest("session/set_model", raw<SetSessionModelParams>(), async (ctx) => {
+			await agentImpl.setConfigOption({
+				sessionId: ctx.params.sessionId,
+				configId: "model",
+				value: ctx.params.modelId,
+			});
+			return {};
+		})
 		// Custom endpoint — not part of the ACP spec. Lets clients discover
 		// available models for the session/setConfigOption "model" option.
 		.onRequest("models/list", raw<unknown>(), () =>
