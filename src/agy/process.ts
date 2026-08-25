@@ -62,6 +62,7 @@ export function buildAgyArgs(opts: AgyArgsOptions): string[] {
 		// terminal for the user to approve tool calls.
 		args.push("--dangerously-skip-permissions");
 	}
+	args.push("--print-timeout", "0");
 	args.push("-p", opts.prompt);
 	return args;
 }
