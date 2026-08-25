@@ -14,6 +14,7 @@ import {
 	decodeErrorDetails,
 	decodePermissions,
 	decodeTaskDetails,
+	decodeToolOutput,
 } from "./columns";
 
 const SELECT_ROWS =
@@ -43,11 +44,13 @@ function decodeColumn<T>(v: unknown, decode: (b: Uint8Array) => T): T | null {
 }
 
 function rowToStep(r: RawRow): StepRow {
+	const rawPayload = toUint8(r.step_payload);
 	return {
 		idx: r.idx,
 		stepType: r.step_type,
 		status: r.status ?? 0,
-		stepPayload: StepPayload.decode(toUint8(r.step_payload)),
+		stepPayload: StepPayload.decode(rawPayload),
+		toolOutput: decodeColumn(rawPayload, decodeToolOutput),
 		error: decodeColumn(r.error_details, decodeErrorDetails),
 		permission: decodeColumn(r.permissions, decodePermissions),
 		task: decodeColumn(r.task_details, decodeTaskDetails),

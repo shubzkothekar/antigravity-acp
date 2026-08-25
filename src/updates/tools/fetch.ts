@@ -2,6 +2,7 @@ import type { SessionUpdate } from "@agentclientprotocol/sdk";
 import type { StepRow } from "../../types";
 import {
 	asStr,
+	codeBlock,
 	parseRawInput,
 	pick,
 	textBlock,
@@ -29,9 +30,8 @@ import {
 */
 
 /**
- * Step type 31 — `read_url_content`. A call-only step (the fetched body is not
- * decoded into the payload), so we surface the URL as the title and echo it as
- * content. Mapped to the ACP `fetch` tool kind.
+ * Step type 31 — `read_url_content`. Surfaces the URL as the title and echoes
+ * the fetched body or URL as content. Mapped to the ACP `fetch` tool kind.
  */
 export function fetchUpdate(stepRow: StepRow): SessionUpdate {
 	const { stepPayload } = stepRow;
@@ -46,7 +46,12 @@ export function fetchUpdate(stepRow: StepRow): SessionUpdate {
 		asStr(toolRun?.titleSecondary)?.trim() ||
 		"Fetch URL";
 
-	const content = url ? [textBlock(url)] : [];
+	const content: Record<string, unknown>[] = [];
+	if (stepRow.toolOutput && stepRow.toolOutput.trim().length > 0) {
+		content.push(codeBlock(stepRow.toolOutput.trim()));
+	} else if (url) {
+		content.push(textBlock(url));
+	}
 
 	return toolCallUpdate({ stepRow, title, kind: "fetch", content });
 }

@@ -4,6 +4,7 @@ import {
 	decodeErrorDetails,
 	decodePermissions,
 	decodeTaskDetails,
+	decodeToolOutput,
 } from "../../src/conversation/columns";
 import { TaskDetails } from "../../src/gen/steps";
 
@@ -116,6 +117,38 @@ describe("conversation/columns", () => {
 			expect(decoded.taskId).toBe("t123");
 			expect(decoded.logUri).toBe("file://path/to/log");
 			expect(decoded.description).toBe("Background task");
+		});
+	});
+
+	describe("decodeToolOutput", () => {
+		test("decodes nested tool output from field 140", () => {
+			// Nested tag 2 message { 1: outputString }
+			const outputWriter = new BinaryWriter();
+			outputWriter.tag(1, 2).string("hello from tool output\nsuccess");
+			const outputBytes = outputWriter.finish();
+
+			// Field 140 message { 2: outputMessage }
+			const f140Writer = new BinaryWriter();
+			f140Writer.tag(2, 2).bytes(outputBytes);
+			const f140Bytes = f140Writer.finish();
+
+			// Step payload { 140: f140Message }
+			const payloadWriter = new BinaryWriter();
+			payloadWriter.tag(140, 2).bytes(f140Bytes);
+			const payloadBytes = payloadWriter.finish();
+
+			const output = decodeToolOutput(payloadBytes);
+			expect(output).toBe("hello from tool output\nsuccess");
+		});
+
+		test("returns null when field 140 is absent", () => {
+			const writer = new BinaryWriter();
+			writer.tag(1, 0).uint32(132);
+			expect(decodeToolOutput(writer.finish())).toBeNull();
+		});
+
+		test("returns null on empty input", () => {
+			expect(decodeToolOutput(new Uint8Array(0))).toBeNull();
 		});
 	});
 });

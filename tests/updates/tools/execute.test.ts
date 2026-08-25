@@ -57,5 +57,30 @@ describe("updates/tools/execute.ts", () => {
 			expect(update.title).toBe("Fallback Title");
 			expect(update.content).toBeUndefined();
 		});
+
+		test("renders toolOutput as content and rawOutput when available", () => {
+			const step = {
+				stepPayload: {
+					toolRun: {
+						call: {
+							rawInputJson: JSON.stringify({
+								CommandLine: "ls -la",
+								Cwd: "/workspace",
+							}),
+						},
+					},
+				},
+				toolOutput: "total 0\n-rw-r--r-- 1 user user 0 file.txt",
+			} as StepRow;
+
+			const update: any = executeUpdate(step);
+			expect(update.title).toBe("ls -la");
+			expect(update.content).toEqual([
+				codeBlock("total 0\n-rw-r--r-- 1 user user 0 file.txt"),
+			]);
+			expect(update.rawOutput).toEqual({
+				output: "total 0\n-rw-r--r-- 1 user user 0 file.txt",
+			});
+		});
 	});
 });

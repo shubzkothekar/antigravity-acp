@@ -38,7 +38,12 @@ export function otherUpdate(stepRow: StepRow): SessionUpdate {
 				asStr(pick(rawInput, "Action", "action"))?.trim() || "manage";
 			const taskId = asStr(pick(rawInput, "TaskId", "taskId"));
 			const title = `Manage task ${action}`;
-			const content = taskId ? [textBlock(`Task: ${taskId}`)] : [];
+			const content: Record<string, unknown>[] = [];
+			if (stepRow.toolOutput && stepRow.toolOutput.trim().length > 0) {
+				content.push(codeBlock(stepRow.toolOutput.trim()));
+			} else if (taskId) {
+				content.push(textBlock(`Task: ${taskId}`));
+			}
 			return toolCallUpdate({ stepRow, title, kind: "other", content });
 		}
 
@@ -50,31 +55,46 @@ export function otherUpdate(stepRow: StepRow): SessionUpdate {
 			const title = duration
 				? `Schedule timer (${duration}s)`
 				: "Schedule timer";
-			const content = prompt ? [textBlock(prompt)] : [];
+			const content: Record<string, unknown>[] = [];
+			if (stepRow.toolOutput && stepRow.toolOutput.trim().length > 0) {
+				content.push(codeBlock(stepRow.toolOutput.trim()));
+			} else if (prompt) {
+				content.push(textBlock(prompt));
+			}
 			return toolCallUpdate({ stepRow, title, kind: "other", content });
 		}
 
 		case "send_message": {
 			const message = asStr(pick(rawInput, "Message", "message"))?.trim();
 			const title = "Send message to subagent";
-			const content = message ? [textBlock(message)] : [];
+			const content: Record<string, unknown>[] = [];
+			if (stepRow.toolOutput && stepRow.toolOutput.trim().length > 0) {
+				content.push(codeBlock(stepRow.toolOutput.trim()));
+			} else if (message) {
+				content.push(textBlock(message));
+			}
 			return toolCallUpdate({ stepRow, title, kind: "other", content });
 		}
 
 		case "manage_subagents": {
 			const action =
 				asStr(pick(rawInput, "Action", "action"))?.trim() || "manage";
+			const content: Record<string, unknown>[] = [];
+			if (stepRow.toolOutput && stepRow.toolOutput.trim().length > 0) {
+				content.push(codeBlock(stepRow.toolOutput.trim()));
+			}
 			return toolCallUpdate({
 				stepRow,
 				title: `Subagents: ${action}`,
 				kind: "other",
+				content,
 			});
 		}
 	}
 
 	// Generic fallback: prefer the human-readable summary, then the generic tool
 	// titles, then the raw tool name. (toolAction is often misleading, so it's the
-	// last resort.) Echo the meaningful arguments, dropping display-only keys.
+	// last resort.) Echo tool output if available, else echo meaningful arguments.
 	const title =
 		asStr(toolRun?.titlePrimary)?.trim() ||
 		asStr(pick(rawInput, "toolSummary", "ToolSummary"))?.trim() ||
@@ -83,7 +103,13 @@ export function otherUpdate(stepRow: StepRow): SessionUpdate {
 		"Tool";
 
 	const content: Record<string, unknown>[] = [];
-	if (rawInput && typeof rawInput === "object" && !Array.isArray(rawInput)) {
+	if (stepRow.toolOutput && stepRow.toolOutput.trim().length > 0) {
+		content.push(codeBlock(stepRow.toolOutput.trim()));
+	} else if (
+		rawInput &&
+		typeof rawInput === "object" &&
+		!Array.isArray(rawInput)
+	) {
 		const { toolAction, toolSummary, ...rest } = rawInput as Record<
 			string,
 			unknown

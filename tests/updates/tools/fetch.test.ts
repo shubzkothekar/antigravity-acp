@@ -48,5 +48,30 @@ describe("updates/tools/fetch.ts", () => {
 			const update: any = fetchUpdate(step);
 			expect(update.title).toBe("Fetch URL");
 		});
+
+		test("renders toolOutput as codeBlock when present", () => {
+			const step = {
+				stepPayload: {
+					toolRun: {
+						call: {
+							rawInputJson: JSON.stringify({ Url: "https://example.com" }),
+						},
+					},
+				},
+				toolOutput: "# Example Content\nSome fetched markdown",
+			} as StepRow;
+
+			const update: any = fetchUpdate(step);
+			expect(update.title).toBe("Fetch https://example.com");
+			expect(update.content).toEqual([
+				{
+					type: "content",
+					content: {
+						type: "text",
+						text: "```\n# Example Content\nSome fetched markdown\n```",
+					},
+				},
+			]);
+		});
 	});
 });

@@ -114,6 +114,8 @@ export function readUpdate(stepRow: StepRow, cwd?: string): SessionUpdate {
 				.map((e) => `${e.name}${e.isDirectory !== 0 ? "/" : ""}`)
 				.join("\n");
 			content.push(codeBlock(body));
+		} else if (stepRow.toolOutput && stepRow.toolOutput.trim().length > 0) {
+			content.push(codeBlock(stepRow.toolOutput.trim()));
 		}
 	} else {
 		// view_file → "Read <file>" or "Read <file>:<start>-<end>" for a range read.
@@ -143,7 +145,7 @@ export function readUpdate(stepRow: StepRow, cwd?: string): SessionUpdate {
 
 		if (filePath) locations.push({ path: filePath, line: startLine });
 
-		const body = asStr(view?.content);
+		const body = asStr(view?.content) ?? stepRow.toolOutput;
 		if (body && body.length > 0) {
 			content.push(codeBlock(body));
 		}

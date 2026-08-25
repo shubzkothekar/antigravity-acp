@@ -92,5 +92,56 @@ describe("updates/tools/read.ts", () => {
 			expect(update.title).toBe("Read c.txt");
 			expect(update.locations).toEqual([{ path: "/a/c.txt", line: 1 }]);
 		});
+
+		test("view_file uses toolOutput when protobuf viewFile content is absent", () => {
+			const step = {
+				stepType: 132,
+				stepPayload: {
+					toolRun: {
+						call: {
+							namePrimary: "view_file",
+							rawInputJson: JSON.stringify({ AbsolutePath: "/a/code.ts" }),
+						},
+					},
+				},
+				toolOutput: "export const answer = 42;",
+			} as unknown as StepRow;
+
+			const update: any = readUpdate(step, "/a");
+			expect(update.title).toBe("Read code.ts");
+			expect(update.content).toEqual([
+				{
+					type: "content",
+					content: {
+						type: "text",
+						text: "```\nexport const answer = 42;\n```",
+					},
+				},
+			]);
+		});
+
+		test("list_dir uses toolOutput when entries is absent", () => {
+			const step = {
+				stepType: 132,
+				stepPayload: {
+					toolRun: {
+						call: {
+							namePrimary: "list_dir",
+							rawInputJson: JSON.stringify({ DirectoryPath: "/a/dir" }),
+						},
+					},
+				},
+				toolOutput: "file1.ts\nfile2.ts",
+			} as unknown as StepRow;
+
+			const update: any = readUpdate(step, "/a");
+			expect(update.title).toBe("Read dir");
+			expect(update.content).toEqual([
+				{
+					type: "content",
+					content: { type: "text", text: "```\nfile1.ts\nfile2.ts\n```" },
+				},
+			]);
+		});
 	});
 });
