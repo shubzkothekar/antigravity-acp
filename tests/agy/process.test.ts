@@ -65,6 +65,8 @@ describe("agy/process.ts", () => {
 				"--add-dir",
 				"/cwd",
 				"--dangerously-skip-permissions",
+				"--print-timeout",
+				"0",
 				"-p",
 				"hello",
 			]);
@@ -87,6 +89,8 @@ describe("agy/process.ts", () => {
 				"--add-dir",
 				"/dir2",
 				"--dangerously-skip-permissions",
+				"--print-timeout",
+				"0",
 				"-p",
 				"hello",
 			]);
@@ -107,6 +111,8 @@ describe("agy/process.ts", () => {
 				"--foo",
 				"bar",
 				"--dangerously-skip-permissions",
+				"--print-timeout",
+				"0",
 				"-p",
 				"hello",
 			]);
@@ -128,6 +134,8 @@ describe("agy/process.ts", () => {
 				"--model",
 				"model-1",
 				"--dangerously-skip-permissions",
+				"--print-timeout",
+				"0",
 				"-p",
 				"hello",
 			]);
