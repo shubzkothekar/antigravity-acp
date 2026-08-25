@@ -112,4 +112,42 @@ describe("conversation/updates", () => {
 			expect(update).toBeNull();
 		});
 	});
+
+	describe("type 132 modern tool routing", () => {
+		test("routes run_command by name", () => {
+			const row = mockStepRow(132, "run_command");
+			const update = buildUpdatefromStepPayload(row);
+			expect((Array.isArray(update) ? update[0] : update)?.sessionUpdate).toBe(
+				"tool_call",
+			);
+			expect((update as any).kind).toBe("execute");
+		});
+
+		test("routes view_file by name", () => {
+			const row = mockStepRow(132, "view_file");
+			const update = buildUpdatefromStepPayload(row);
+			expect((Array.isArray(update) ? update[0] : update)?.sessionUpdate).toBe(
+				"tool_call",
+			);
+			expect((update as any).kind).toBe("read");
+		});
+
+		test("routes find_by_name by name", () => {
+			const row = mockStepRow(132, "find_by_name");
+			const update = buildUpdatefromStepPayload(row);
+			expect((Array.isArray(update) ? update[0] : update)?.sessionUpdate).toBe(
+				"tool_call",
+			);
+			expect((update as any).kind).toBe("search");
+		});
+
+		test("routes orchestration tools (e.g. manage_task) to otherUpdate", () => {
+			const row = mockStepRow(132, "manage_task");
+			const update = buildUpdatefromStepPayload(row);
+			expect((Array.isArray(update) ? update[0] : update)?.sessionUpdate).toBe(
+				"tool_call",
+			);
+			expect((update as any).kind).toBe("other");
+		});
+	});
 });

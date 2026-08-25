@@ -101,6 +101,7 @@ export function toolCallUpdate(opts: {
 	status?: "pending" | "in_progress" | "completed" | "failed";
 	content?: Record<string, unknown>[];
 	locations?: Record<string, unknown>[];
+	rawOutput?: Record<string, unknown>;
 }): SessionUpdate {
 	const {
 		stepRow,
@@ -109,6 +110,7 @@ export function toolCallUpdate(opts: {
 		status = toolCallStatus(stepRow),
 		content,
 		locations,
+		rawOutput: explicitRawOutput,
 	} = opts;
 
 	const blocks: Record<string, unknown>[] = [...(content ?? [])];
@@ -122,8 +124,16 @@ export function toolCallUpdate(opts: {
 				message: stepRow.error.message || stepRow.error.detail,
 				detail: stepRow.error.detail,
 				stackTrace: stepRow.error.stackTrace,
+				...(explicitRawOutput ?? {}),
 			}
-		: undefined;
+		: (explicitRawOutput ??
+			(stepRow.toolOutput != null
+				? {
+						output: stepRow.toolOutput,
+						content: stepRow.toolOutput,
+						text: stepRow.toolOutput,
+					}
+				: undefined));
 
 	return {
 		sessionUpdate: "tool_call",

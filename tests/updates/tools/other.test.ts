@@ -99,5 +99,31 @@ describe("updates/tools/other.ts", () => {
 			expect(text).toContain("arg1");
 			expect(text).not.toContain("toolAction");
 		});
+
+		test("fallback prefers toolOutput when available", () => {
+			const step = {
+				stepPayload: {
+					toolRun: {
+						titlePrimary: "Custom Action",
+						call: {
+							namePrimary: "unknown_tool",
+							rawInputJson: JSON.stringify({ arg1: "val" }),
+						},
+					},
+				},
+				toolOutput: "Custom tool executed successfully",
+			} as StepRow;
+			const update: any = otherUpdate(step);
+			expect(update.title).toBe("Custom Action");
+			expect(update.content).toEqual([
+				{
+					type: "content",
+					content: {
+						type: "text",
+						text: "```\nCustom tool executed successfully\n```",
+					},
+				},
+			]);
+		});
 	});
 });

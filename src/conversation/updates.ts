@@ -31,7 +31,11 @@ function buildByToolName(
 
 	if (name === "view_file" || name === "list_dir")
 		return readUpdate(stepRow, cwd);
-	if (name === "grep_search" || name === "search_web")
+	if (
+		name === "grep_search" ||
+		name === "search_web" ||
+		name === "find_by_name"
+	)
 		return searchUpdate(stepRow, cwd);
 	if (name === "run_command") return executeUpdate(stepRow, cwd);
 	if (name === "read_url_content") return fetchUpdate(stepRow);
@@ -67,7 +71,7 @@ function buildByToolName(
  *   31            read_url_content       → tool_call (fetch)
  *   127           invoke_subagent        → tool_call (other)
  *   138           ask_question           → tool_call (other)
- *   132           manage_task/schedule/… → tool_call (generic fallback)
+ *   132           modern tool calls      → routed by tool name
  *   90, 98, 101   lifecycle/system       → null (skipped)
  *   default       unknown tool step      → tool_call (generic) or null
  */
@@ -115,8 +119,8 @@ export const buildUpdatefromStepPayload = (
 		case 138: // ask_question
 			return questionUpdate(stepRow);
 
-		case 132: // manage_task / schedule / send_message / manage_subagents
-			return otherUpdate(stepRow);
+		case 132: // Modern agy tool step: run_command, view_file, grep_search, etc.
+			return buildByToolName(stepRow, cwd);
 
 		case 90: // ephemeral_message
 		case 98: // conversation_history

@@ -86,5 +86,63 @@ describe("updates/tools/search.ts", () => {
 			expect(update.title).toBe("Web search how to bun");
 			expect(update.content).toBeUndefined();
 		});
+
+		test("search_web renders toolOutput when available", () => {
+			const step = {
+				stepType: 132,
+				stepPayload: {
+					toolRun: {
+						call: {
+							namePrimary: "search_web",
+							rawInputJson: JSON.stringify({ query: "bun test" }),
+						},
+					},
+				},
+				toolOutput: "Search results for bun test...",
+			} as StepRow;
+
+			const update: any = searchUpdate(step);
+			expect(update.title).toBe("Web search bun test");
+			expect(update.content).toEqual([
+				{
+					type: "content",
+					content: {
+						type: "text",
+						text: "```\nSearch results for bun test...\n```",
+					},
+				},
+			]);
+		});
+
+		test("find_by_name extracts pattern and directory", () => {
+			const step = {
+				stepType: 132,
+				stepPayload: {
+					toolRun: {
+						call: {
+							namePrimary: "find_by_name",
+							rawInputJson: JSON.stringify({
+								Pattern: "*.ts",
+								SearchDirectory: "/a/src",
+							}),
+						},
+					},
+				},
+				toolOutput: "src/index.ts\nsrc/utils.ts",
+			} as StepRow;
+
+			const update: any = searchUpdate(step, "/a");
+			expect(update.title).toBe("Search '*.ts' src");
+			expect(update.content).toEqual([
+				{
+					type: "content",
+					content: {
+						type: "text",
+						text: "```\nsrc/index.ts\nsrc/utils.ts\n```",
+					},
+				},
+			]);
+			expect(update.locations).toEqual([{ path: "/a/src" }]);
+		});
 	});
 });

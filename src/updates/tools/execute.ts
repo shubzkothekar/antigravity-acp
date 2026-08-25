@@ -53,7 +53,10 @@ export function executeUpdate(stepRow: StepRow, _cwd?: string): SessionUpdate {
 		"Command Execution";
 
 	const content: Record<string, unknown>[] = [];
-	if (cmd && cmd.trim().length > 0) {
+	const output = stepRow.toolOutput;
+	if (output && output.trim().length > 0) {
+		content.push(codeBlock(output.trim()));
+	} else if (cmd && cmd.trim().length > 0) {
 		content.push(codeBlock(cmd));
 	}
 
@@ -71,5 +74,6 @@ export function executeUpdate(stepRow: StepRow, _cwd?: string): SessionUpdate {
 		kind: "execute",
 		content,
 		locations,
+		rawOutput: output != null ? { output } : undefined,
 	});
 }

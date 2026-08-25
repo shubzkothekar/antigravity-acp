@@ -111,4 +111,45 @@ export function decodeTaskDetails(input: Uint8Array): TaskDetails {
 	return TaskDetails.decode(input);
 }
 
+/**
+ * Extract tool execution output from `step_payload` (Field 140 -> Tag 2 -> Tag 1).
+ * In modern agy CLI (v1.1+), tool results (stdout, file content, grep hits, etc.)
+ * are stored in this protobuf field.
+ * Returns null when absent or malformed.
+ */
+export function decodeToolOutput(input: Uint8Array): string | null {
+	if (!input || input.length === 0) return null;
+	try {
+		const r = new BinaryReader(input);
+		while (r.pos < r.len) {
+			const tag = r.uint32();
+			if (tag >>> 3 === 140 && (tag & 7) === 2) {
+				const f140 = r.bytes();
+				const f140Reader = new BinaryReader(f140);
+				while (f140Reader.pos < f140Reader.len) {
+					const sTag = f140Reader.uint32();
+					if (sTag >>> 3 === 2 && (sTag & 7) === 2) {
+						const t2 = f140Reader.bytes();
+						const t2Reader = new BinaryReader(t2);
+						while (t2Reader.pos < t2Reader.len) {
+							const oTag = t2Reader.uint32();
+							if (oTag >>> 3 === 1 && (oTag & 7) === 2) {
+								return t2Reader.string();
+							}
+							t2Reader.skip(oTag & 7);
+						}
+					} else {
+						f140Reader.skip(sTag & 7);
+					}
+				}
+			} else {
+				r.skip(tag & 7);
+			}
+		}
+	} catch {
+		return null;
+	}
+	return null;
+}
+
 export type { TaskDetails };
