@@ -1,6 +1,33 @@
 // Spawning and querying the agy CLI via Bun's native process APIs.
 
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
+
 const BYPASS_MODES = new Set(["bypassPermissions", "bypass", "dontAsk"]);
+
+// Linux MAX_ARG_STRLEN is 128KB; stay well below it to prevent E2BIG errors.
+export const MAX_PROMPT_ARG_LENGTH = 64 * 1024;
+
+/**
+ * Prepares the prompt argument for agy CLI.
+ * If the prompt is too large for a CLI argument (>64KB), offload it to a temp
+ * file to prevent E2BIG (argument list too long) spawn errors.
+ */
+export function preparePromptArg(
+	prompt: string,
+	sessionId?: string,
+): { promptArg: string; tempFilePath?: string } {
+	if (prompt.length <= MAX_PROMPT_ARG_LENGTH) {
+		return { promptArg: prompt };
+	}
+	const tempDir = os.tmpdir();
+	const filename = `agy-prompt-${sessionId ?? "turn"}-${Date.now()}.md`;
+	const tempFilePath = path.join(tempDir, filename);
+	fs.writeFileSync(tempFilePath, prompt, "utf-8");
+	const promptArg = `Please read the prompt and context in ${tempFilePath} using view_file and follow the instructions in it.`;
+	return { promptArg, tempFilePath };
+}
 
 export interface DiscoveredModel {
 	value: string;

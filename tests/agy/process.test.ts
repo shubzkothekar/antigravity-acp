@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import {
+	MAX_PROMPT_ARG_LENGTH,
 	buildAgyArgs,
 	discoverModels,
 	extraArgsFromEnv,
+	preparePromptArg,
 	spawnAgy,
 } from "../../src/agy/process";
 
@@ -189,6 +191,29 @@ describe("agy/process.ts", () => {
 		it("should securely split shell variables with irregular spacing", () => {
 			process.env.AGY_EXTRA_ARGS = "  --foo   bar   --baz\t qux \n ";
 			expect(extraArgsFromEnv()).toEqual(["--foo", "bar", "--baz", "qux"]);
+		});
+	});
+
+	describe("preparePromptArg()", () => {
+		it("should keep normal prompts unchanged", () => {
+			const res = preparePromptArg("short prompt");
+			expect(res.promptArg).toBe("short prompt");
+			expect(res.tempFilePath).toBeUndefined();
+		});
+
+		it("should offload oversized prompts to a temporary file", () => {
+			const huge = "A".repeat(MAX_PROMPT_ARG_LENGTH + 100);
+			const res = preparePromptArg(huge, "test-session");
+			expect(res.tempFilePath).toBeDefined();
+			expect(res.promptArg).toContain("Please read the prompt and context in");
+			expect(res.promptArg).toContain(res.tempFilePath!);
+			
+			// Verify file content
+			const content = require("node:fs").readFileSync(res.tempFilePath!, "utf-8");
+			expect(content).toBe(huge);
+
+			// Clean up
+			require("node:fs").unlinkSync(res.tempFilePath!);
 		});
 	});
 });
