@@ -56,7 +56,7 @@ export const RELEASES: Record<string, Release> = {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 export function releaseUrl(asset: string): string {
-	return `https://github.com/${GITHUB_REPO}/releases/download/v${AGY_VERSION}/${asset}`;
+	return `https://github.com/${GITHUB_REPO}/releases/download/${AGY_VERSION}/${asset}`;
 }
 
 export function sha256hex(buf: Buffer): string {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
 import {
 	buildAgyArgs,
+	buildInteractiveAgyArgs,
 	discoverModels,
 	extraArgsFromEnv,
 	spawnAgy,
@@ -164,6 +165,36 @@ describe("agy/process.ts", () => {
 				prompt: "hello",
 			});
 			expect(argsNullMode).toContain("--dangerously-skip-permissions");
+		});
+	});
+
+	describe("buildInteractiveAgyArgs()", () => {
+		it("should preserve common session options and use prompt-interactive", () => {
+			const args = buildInteractiveAgyArgs({
+				workingDir: "/cwd",
+				additionalDirs: ["/extra"],
+				conversationId: "conv-1",
+				modelId: "model-1",
+				permissionMode: "bypassPermissions",
+				prompt: "hello",
+				extraArgs: ["--effort", "low"],
+			});
+
+			expect(args).toEqual([
+				"--add-dir",
+				"/cwd",
+				"--add-dir",
+				"/extra",
+				"--effort",
+				"low",
+				"--conversation",
+				"conv-1",
+				"--model",
+				"model-1",
+				"--dangerously-skip-permissions",
+				"--prompt-interactive",
+				"hello",
+			]);
 		});
 	});
 

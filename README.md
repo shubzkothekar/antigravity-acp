@@ -2,8 +2,8 @@
 
 An [Agent Client Protocol](https://agentclientprotocol.com) (ACP) server for
 Google Antigravity's `agy` CLI, built on [Bun](https://bun.com). It lets any
-ACP-compatible editor drive `agy`: it spawns the CLI, streams its progress live,
-and replays conversation history on demand.
+ACP-compatible editor drive `agy`: it keeps one interactive CLI process per ACP
+session, streams its progress live, and replays conversation history on demand.
 
 ## ⚠️ Terms of Service risk
 
@@ -18,8 +18,8 @@ Google's [Antigravity Terms of Service](https://antigravity.google/terms) state:
 
 `antigravity-acp` does not itself request, store, or process any
 authentication credentials — it only spawns the official `agy` binary as a
-subprocess and talks to it over stdio; all Google OAuth login is handled
-entirely by `agy` itself, outside of this project. However, the *effect* is
+subprocess and drives it through a local pseudo-terminal; all Google OAuth
+login is handled entirely by `agy` itself, outside of this project. However, the *effect* is
 still a non-Google, ACP-compatible editor driving `agy` (and therefore your
 Antigravity account) through a third-party tool — the exact pattern Google's
 FAQ names as a Terms of Service violation (Claude Code, OpenClaw, OpenCode,
@@ -82,6 +82,20 @@ skipped when `AGY_SKIP_DOWNLOAD=1` or `$AGY_BIN` is set.
 | `AGY_SKIP_DOWNLOAD` | Set to `1` to skip the download entirely |
 | `AGY_EXTRA_ARGS` | Extra args forwarded to every `agy` invocation |
 | `AGY_CONVERSATIONS_DIR` | Custom directory where `agy` writes its conversation SQLite databases |
+| `AGY_PERSISTENT` | Persistent interactive sessions are enabled by default; set to `0` to use one process per prompt |
+| `AGY_PROMPT_TIMEOUT_MS` | Timeout for one interactive prompt turn in milliseconds (default: 300000) |
+
+### Persistent sessions
+
+By default, each ACP session owns one long-lived `agy --prompt-interactive`
+process. The first prompt pays the normal CLI startup cost; later prompts are
+submitted through the same PTY and reuse the initialized process and conversation.
+Changing the selected model, permission mode, working directory, additional
+directories, or `AGY_EXTRA_ARGS` safely restarts that session's process.
+
+Set `AGY_PERSISTENT=0` to restore the original one-shot behavior. This fallback
+is useful when a platform does not support Bun's PTY implementation or when
+debugging an `agy` TUI compatibility issue.
 
 ## Build (Single Executable Application)
 
@@ -119,12 +133,13 @@ src/
     server.ts                 Bun stdio <-> ndJsonStream <-> agent
     agent.ts                  initialize / session.* / prompt / cancel
     sessions.ts               in-memory registry + eviction
-    adapter.ts                prompt turn: spawn agy, poll, stream
+    adapter.ts                prompt turns: reuse agy PTY, poll DB, stream
     client.ts                 AgentContext wrapper (notify / request)
   agy/
     binary.ts                 resolve binary: SEA-local / bin/ / $AGY_BIN / PATH
     installer.ts              shared download + SHA-256 verify + extract logic
     process.ts                Bun.spawn, arg building, model discovery
+    interactive.ts            long-lived Bun.Terminal / PTY session runtime
   constants/
     index.ts                  shared constants (paths, poll intervals, modes, commands)
   conversation/
@@ -165,6 +180,8 @@ task/permission/error enrichment — is identical, so both drive a single
   tail of steps read and translated, then appended. (agy DBs are append-only.)
 - **Reused DB handle**: the live poll loop keeps one `bun:sqlite` handle +
   prepared statement open for the whole turn instead of reopening each tick.
+- **Reused `agy` process**: one PTY-backed interactive process is retained per
+  ACP session, eliminating repeated CLI initialization on subsequent prompts.
 - **Bun-native throughout**: `bun:sqlite`, `Bun.spawn`, `Bun.stdin`/`Bun.stdout`,
   `Bun.file`/`Bun.write` — no `better-sqlite3`, `protobufjs` runtime, or
   node-stream shims.

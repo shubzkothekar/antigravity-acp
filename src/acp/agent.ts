@@ -272,6 +272,7 @@ export class AgyAcpAgent {
 		sessionId?: string;
 	}): Promise<DeleteSessionResponse> {
 		const sessionId = this.requireSessionId(params.sessionId);
+		await this.adapter.close(sessionId);
 		const deleted = await this.sessions.delete(sessionId);
 		if (!deleted) throw RequestError.resourceNotFound(sessionId);
 		this.activeClients.delete(sessionId);
@@ -282,7 +283,11 @@ export class AgyAcpAgent {
 	closeSession(params: { sessionId?: string }): CloseSessionResponse {
 		const sessionId = params.sessionId;
 		if (sessionId) {
-			this.adapter.cancel(sessionId);
+			void this.adapter.close(sessionId).catch((error) => {
+				console.error(
+					`[agy-acp] failed to close session ${sessionId}: ${(error as Error).message}`,
+				);
+			});
 			this.sessions.evict(sessionId);
 			this.activeClients.delete(sessionId);
 		}
