@@ -42,3 +42,79 @@ jobs:
             dist/agy-acp-windows-x64.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-homebrew-tap:
+    name: Update Homebrew Tap
+    needs: build-and-release
+    if: vars.HOMEBREW_TAP_REPO != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.HOMEBREW_TAP_REPO }}
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          VERSION="${VERSION#v}"
+          for asset in agy-acp-darwin-arm64 agy-acp-darwin-x64 agy-acp-linux-arm64 agy-acp-linux-x64; do
+            gh release download "v${VERSION}" --repo "${GITHUB_REPOSITORY}" --pattern "$asset" --dir release-assets
+          done
+
+      - name: Generate formula
+        env:
+          VERSION: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          VERSION="${VERSION#v}"
+          mkdir -p homebrew-tap/Formula
+          cat > homebrew-tap/Formula/antigravity-acp.rb <<EOF
+          class AntigravityAcp < Formula
+            desc "Agent Client Protocol server for Google Antigravity's agy CLI"
+            homepage "https://github.com/${REPOSITORY}"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              if Hardware::CPU.arm?
+                url "https://github.com/${REPOSITORY}/releases/download/v${VERSION}/agy-acp-darwin-arm64"
+                sha256 "$(sha256sum release-assets/agy-acp-darwin-arm64 | cut -d ' ' -f 1)"
+              else
+                url "https://github.com/${REPOSITORY}/releases/download/v${VERSION}/agy-acp-darwin-x64"
+                sha256 "$(sha256sum release-assets/agy-acp-darwin-x64 | cut -d ' ' -f 1)"
+              end
+            end
+
+            on_linux do
+              if Hardware::CPU.arm?
+                url "https://github.com/${REPOSITORY}/releases/download/v${VERSION}/agy-acp-linux-arm64"
+                sha256 "$(sha256sum release-assets/agy-acp-linux-arm64 | cut -d ' ' -f 1)"
+              else
+                url "https://github.com/${REPOSITORY}/releases/download/v${VERSION}/agy-acp-linux-x64"
+                sha256 "$(sha256sum release-assets/agy-acp-linux-x64 | cut -d ' ' -f 1)"
+              end
+            end
+
+            def install
+              bin.install Dir["*"] .first => "antigravity-acp"
+            end
+          end
+          EOF
+
+      - name: Commit and push formula
+        working-directory: homebrew-tap
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/antigravity-acp.rb
+          git diff --cached --quiet || git commit -m "Update antigravity-acp to ${VERSION#v}"
+          git push

@@ -85,6 +85,11 @@ export function runAcp() {
 		.onRequest(methods.agent.session.setConfigOption, (ctx) =>
 			agentImpl.setConfigOption(ctx.params),
 		)
+		// Custom endpoint — not part of the ACP spec. Lets clients discover
+		// available models for the session/setConfigOption "model" option.
+		.onRequest("models/list", raw<unknown>(), () =>
+			agentImpl.listModels(),
+		)
 		.onRequest("resources/list", raw<unknown>(), () =>
 			agentImpl.listResources(),
 		)

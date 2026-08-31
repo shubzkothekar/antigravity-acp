@@ -17,7 +17,8 @@ import type {
 	SetSessionConfigOptionResponse,
 } from "@agentclientprotocol/sdk";
 import { RequestError } from "@agentclientprotocol/sdk";
-import { discoverModels } from "../agy/process";
+import { type DiscoveredModel, discoverModels, runNonInteractivePrompt } from "../agy/process";
+import { formatUsageOutput } from "../agy/usage-format";
 import {
 	AUTH_METHOD_ID,
 	AVAILABLE_COMMANDS,
@@ -51,11 +52,16 @@ interface ConfigResult {
 	configOptions: SessionConfigOption[];
 }
 
+const DEFAULT_MODELS: DiscoveredModel[] = [
+	{ value: "gemini-3.6-flash-medium", name: "Gemini 3.6 Flash (Medium)" },
+	{ value: "claude-opus-4-6-thinking", name: "Claude Opus 4.6 (Thinking)" },
+];
+
 export class AgyAcpAgent {
 	private readonly sessions: SessionManager;
 	private readonly adapter: Adapter;
 	private readonly replayCache = new ReplayCache();
-	private availableModels: string[] = [];
+	private availableModels: DiscoveredModel[] = [];
 	// Tracks which AcpClient is serving each session so async updates can be pushed.
 	private readonly activeClients = new Map<string, AcpClient>();
 
@@ -72,8 +78,21 @@ export class AgyAcpAgent {
 			if (fs.existsSync(MODELS_CACHE_FILE)) {
 				const cached = JSON.parse(fs.readFileSync(MODELS_CACHE_FILE, "utf-8"));
 				if (Array.isArray(cached) && cached.length > 0) {
-					this.availableModels = cached;
+					// Normalize cached items to DiscoveredModel structure for backwards compatibility with legacy string[] cache files.
+					this.availableModels = cached.map((item: any) =>
+						typeof item === "string" ? { value: item, name: item } : item,
+					);
 				}
+			}
+		} catch {
+			// ignore
+		}
+
+		// Save initial default models cache if missing
+		try {
+			if (!fs.existsSync(MODELS_CACHE_FILE)) {
+				fs.mkdirSync(STATE_DIR, { recursive: true });
+				fs.writeFileSync(MODELS_CACHE_FILE, JSON.stringify(this.availableModels));
 			}
 		} catch {
 			// ignore
@@ -98,6 +117,18 @@ export class AgyAcpAgent {
 	}
 
 	// --- ACP methods ---------------------------------------------------------
+
+	listModels() {
+		const models = this.availableModels.length > 0 ? this.availableModels : DEFAULT_MODELS;
+		return {
+			models: models.map((m) => ({
+				id: m.value,
+				name: m.name,
+				description: `Google Antigravity ${m.name}`,
+			})),
+			currentModelId: models[0]?.value,
+		};
+	}
 
 	initialize(): InitializeResponse {
 		return {
@@ -277,6 +308,23 @@ export class AgyAcpAgent {
 		}
 
 		const rawText = promptText(params.prompt);
+		const userText = rawPromptText(params.prompt).trim();
+		if (userText === "/usage" || userText.startsWith("/usage ")) {
+			const output = await runNonInteractivePrompt(
+				this.config.binary,
+				"/usage",
+				session.cwd,
+			);
+			await client.update(sessionId, {
+				sessionUpdate: "agent_message_chunk",
+				content: {
+					type: "text",
+					text: output ? formatUsageOutput(output) : "No usage data available.",
+				},
+			});
+			return { stopReason: "end_turn" };
+		}
+
 		const text =
 			session.permissionMode === PLAN_MODE_ID
 				? PLAN_MODE_INJECTION + rawText
@@ -416,14 +464,14 @@ export class AgyAcpAgent {
 
 		if (models.length > 0) {
 			const currentModel =
-				session.modelId ?? models[0] ?? "Gemini 3.5 Flash (Medium)";
+				session.modelId ?? models[0]?.value ?? "gemini-3.6-flash-medium";
 			options.push({
 				id: MODEL_CONFIG_ID,
 				name: "Model",
 				category: "model",
 				type: "select",
 				currentValue: currentModel,
-				options: models.map((name) => ({ value: name, name })),
+				options: models.map((m) => ({ value: m.value, name: m.name })),
 			});
 		}
 
@@ -521,4 +569,18 @@ function stringField(obj: Record<string, unknown>, ...keys: string[]): string {
 		if (typeof obj[key] === "string") return obj[key] as string;
 	}
 	return "";
+}
+
+/** Extract raw user text from ACP prompt blocks without XML tag formatting. */
+function rawPromptText(prompt: unknown): string {
+	const blocks = Array.isArray(prompt) ? prompt : [];
+	const parts: string[] = [];
+	for (const block of blocks) {
+		if (!block || typeof block !== "object") continue;
+		const obj = block as Record<string, unknown>;
+		if (typeof obj.text === "string") {
+			parts.push(obj.text);
+		}
+	}
+	return parts.join("\n").trim();
 }

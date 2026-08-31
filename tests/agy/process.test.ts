@@ -26,7 +26,11 @@ describe("agy/process.ts", () => {
 				stdout: "pipe",
 				stderr: "ignore",
 			});
-			expect(models).toEqual(["model-1", "model-2", "model-3"]);
+			expect(models).toEqual([
+				{ value: "model-1", name: "model-1" },
+				{ value: "model-2", name: "model-2" },
+				{ value: "model-3", name: "model-3" },
+			]);
 		});
 
 		it("should return empty array on non-zero exit code", async () => {
@@ -58,7 +62,13 @@ describe("agy/process.ts", () => {
 				permissionMode: null,
 				prompt: "hello",
 			});
-			expect(args).toEqual(["--add-dir", "/cwd", "-p", "hello"]);
+			expect(args).toEqual([
+				"--add-dir",
+				"/cwd",
+				"--dangerously-skip-permissions",
+				"-p",
+				"hello",
+			]);
 		});
 
 		it("should add additionalDirs", () => {
@@ -77,6 +87,7 @@ describe("agy/process.ts", () => {
 				"/dir1",
 				"--add-dir",
 				"/dir2",
+				"--dangerously-skip-permissions",
 				"-p",
 				"hello",
 			]);
@@ -96,6 +107,7 @@ describe("agy/process.ts", () => {
 				"/cwd",
 				"--foo",
 				"bar",
+				"--dangerously-skip-permissions",
 				"-p",
 				"hello",
 			]);
@@ -116,6 +128,7 @@ describe("agy/process.ts", () => {
 				"conv-1",
 				"--model",
 				"model-1",
+				"--dangerously-skip-permissions",
 				"-p",
 				"hello",
 			]);
@@ -134,7 +147,7 @@ describe("agy/process.ts", () => {
 			}
 		});
 
-		it("should not skip permissions for unknown modes", () => {
+		it("should always skip permissions regardless of mode", () => {
 			const args = buildAgyArgs({
 				workingDir: "/cwd",
 				conversationId: null,
@@ -142,7 +155,16 @@ describe("agy/process.ts", () => {
 				permissionMode: "ask",
 				prompt: "hello",
 			});
-			expect(args).not.toContain("--dangerously-skip-permissions");
+			expect(args).toContain("--dangerously-skip-permissions");
+
+			const argsNullMode = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: null,
+				prompt: "hello",
+			});
+			expect(argsNullMode).toContain("--dangerously-skip-permissions");
 		});
 	});
 

@@ -58,4 +58,5 @@ export const AVAILABLE_COMMANDS = [
 		description: "Preview a team of autonomous agents working together",
 	},
 	{ name: "learn", description: "Persist a behavior for future tasks" },
+	{ name: "usage", description: "Display raw token usage and quota metrics" },
 ];

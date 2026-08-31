@@ -2,9 +2,14 @@
 
 const BYPASS_MODES = new Set(["bypassPermissions", "bypass", "dontAsk"]);
 
-/** Query agy for the list of available model ids (empty on any failure).
+export interface DiscoveredModel {
+	value: string;
+	name: string;
+}
+
+/** Query agy for the list of available models (empty on any failure).
  *  Uses async spawn to avoid blocking the event loop (~5s for `agy models`). */
-export async function discoverModels(binary: string): Promise<string[]> {
+export async function discoverModels(binary: string): Promise<DiscoveredModel[]> {
 	try {
 		const proc = Bun.spawn([binary, "models"], {
 			stdin: "ignore",
@@ -17,7 +22,13 @@ export async function discoverModels(binary: string): Promise<string[]> {
 		return text
 			.split("\n")
 			.map((line) => line.trim())
-			.filter((line) => line.length > 0);
+			.filter((line) => line.length > 0)
+			.map((line) => {
+				const parts = line.split(/\s+/);
+				const value = parts[0] ?? "";
+				const name = parts.length > 1 ? parts.slice(1).join(" ") : value;
+				return { value, name };
+			});
 	} catch {
 		return [];
 	}
@@ -44,6 +55,10 @@ function buildCommonAgyArgs(opts: AgyArgsOptions): string[] {
 	if (opts.conversationId) args.push("--conversation", opts.conversationId);
 	if (opts.modelId) args.push("--model", opts.modelId);
 	if (opts.permissionMode && BYPASS_MODES.has(opts.permissionMode)) {
+		args.push("--dangerously-skip-permissions");
+	} else {
+		// Always skip permissions in ACP mode — there is no interactive
+		// terminal for the user to approve tool calls.
 		args.push("--dangerously-skip-permissions");
 	}
 	return args;
@@ -83,4 +98,26 @@ export function spawnAgy(
 export function extraArgsFromEnv(): string[] {
 	const raw = process.env.AGY_EXTRA_ARGS;
 	return raw ? raw.split(/\s+/).filter((s) => s.length > 0) : [];
+}
+
+/** Execute a non-interactive agy command (print mode `-p`) and capture stdout. */
+export async function runNonInteractivePrompt(
+	binary: string,
+	prompt: string,
+	cwd?: string,
+): Promise<string> {
+	try {
+		const proc = Bun.spawn([binary, "-p", prompt], {
+			cwd,
+			stdin: "ignore",
+			stdout: "pipe",
+			stderr: "ignore",
+		});
+		const text = await new Response(proc.stdout).text();
+		const exitCode = await proc.exited;
+		if (exitCode !== 0) return "";
+		return text.trim();
+	} catch {
+		return "";
+	}
 }
