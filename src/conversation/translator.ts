@@ -40,6 +40,11 @@ export class Translator {
 	private readonly agentTextLengths = new Map<number, number>();
 	// Streaming: tool step indices already emitted (dedup across polls).
 	private readonly emittedSteps = new Set<number>();
+	// Streaming: tool steps emitted with a non-terminal status (idx -> toolCallId).
+	// agy updates step rows in place as tools run, so a later poll can observe
+	// the terminal transition and close the tool-call lifecycle (see
+	// `emitToolStepTerminal`).
+	private readonly openToolSteps = new Map<number, string>();
 	// Replay: buffered consecutive agent-text parts, flushed at boundaries.
 	private readonly pendingAgentParts: string[] = [];
 
@@ -94,12 +99,58 @@ export class Translator {
 				if (this.opts.mode === "replay") {
 					this.flushAgentBuffer(out);
 				} else if (this.emittedSteps.has(row.idx)) {
+					// agy moves a step's status in place (same idx) as its tool runs,
+					// and every poll re-reads the whole turn — so a tool step that was
+					// first emitted mid-run may have reached a terminal state since.
+					// Re-emit it as tool_call_update so clients can close the
+					// tool-call lifecycle; without this, such a step stays
+					// in_progress forever.
+					this.emitToolStepTerminal(row, out);
 					return;
 				}
 				this.emittedSteps.add(row.idx);
-				this.pushDispatched(row, out);
+				for (const update of this.dispatchStep(row)) {
+					out.push(update);
+					this.trackOpenToolStep(row.idx, update);
+				}
 			}
 		}
+	}
+
+	/**
+	 * Remember tool-call updates emitted with a non-terminal status, so a later
+	 * poll can close them once agy reports the outcome. Terminal tool calls and
+	 * non-tool updates need no tracking.
+	 */
+	private trackOpenToolStep(idx: number, update: SessionUpdate): void {
+		if (this.opts.mode !== "stream") return;
+		if (update.sessionUpdate !== "tool_call") return;
+		// An absent status means in_progress per the ACP spec.
+		if (update.status === "completed" || update.status === "failed") return;
+		this.openToolSteps.set(idx, update.toolCallId);
+	}
+
+	/**
+	 * Re-build the update for an already-emitted tool step and emit it as
+	 * tool_call_update when agy has since moved it to a terminal state. Steps
+	 * still in flight are suppressed — only the terminal transition is worth a
+	 * notification.
+	 */
+	private emitToolStepTerminal(row: StepRow, out: SessionUpdate[]): void {
+		if (!this.openToolSteps.has(row.idx)) return;
+		for (const update of this.dispatchStep(row)) {
+			if (update.sessionUpdate !== "tool_call") continue;
+			if (update.status !== "completed" && update.status !== "failed") continue;
+			out.push({ ...update, sessionUpdate: "tool_call_update" });
+			this.openToolSteps.delete(row.idx);
+		}
+	}
+
+	/** Build the ACP updates for one step via the per-step-type dispatchers. */
+	private dispatchStep(row: StepRow): SessionUpdate[] {
+		const update = buildUpdatefromStepPayload(row, this.opts.cwd);
+		if (Array.isArray(update)) return update;
+		return update ? [update] : [];
 	}
 
 	private pushDispatched(row: StepRow, out: SessionUpdate[]): void {
