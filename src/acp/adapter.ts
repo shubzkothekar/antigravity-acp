@@ -4,45 +4,12 @@
 
 import { buildAgyArgs, extraArgsFromEnv, spawnAgy } from "../agy/process";
 import { POLL_INTERVAL_MS } from "../constants";
-import type { ErrorDetails } from "../conversation/columns";
 import { conversationSnapshot } from "../conversation/scan";
 import { StreamPoller } from "../conversation/streaming";
 import type { Session } from "../types/session";
 import type { AcpClient } from "./client";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-/** Stop agy. SIGINT allows it to flush its DB before exiting; on Windows we
- *  fall back to an ungraceful kill because SIGINT is not a real signal there. */
-function interrupt(child: Bun.Subprocess): void {
-	if (process.platform === "win32") {
-		child.kill();
-	} else {
-		child.kill("SIGINT");
-	}
-}
-
-/** Render agy's quota error the way the Antigravity IDE does: the message,
- *  its Error ID, and the absolute time the quota refreshes. */
-export function formatQuotaError(
-	e: ErrorDetails,
-	now: Date = new Date(),
-): string {
-	const raw = (e.message || e.detail).trim();
-	// "API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached. ... Resets in 7m11s."
-	const text = raw.replace(/^.*?RESOURCE_EXHAUSTED \(code 429\):\s*/, "");
-	const lines = [text.replace(/\s*Resets in [^.]*\.?\s*$/, "")];
-	if (e.id) lines.push(`Error ID: ${e.id}`);
-	const m = raw.match(/Resets in ((?:\d+h)?(?:\d+m)?(?:\d+s)?)/);
-	if (m?.[1]) {
-		const [, h = "0", min = "0", sec = "0"] =
-			m[1].match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/) ?? [];
-		const ms = (Number(h) * 3600 + Number(min) * 60 + Number(sec)) * 1000;
-		const at = new Date(now.getTime() + ms).toLocaleString("en-US");
-		lines.push(`Your plan's baseline quota will refresh on ${at}.`);
-	}
-	return lines.join("\n\n");
-}
 
 export interface PromptOutcome {
 	stopReason: "end_turn" | "cancelled";
@@ -70,7 +37,15 @@ export class Adapter {
 	cancel(sessionId: string): void {
 		this.cancelled.add(sessionId);
 		const child = this.children.get(sessionId);
-		if (child) interrupt(child);
+		if (child) {
+			// SIGINT allows agy to flush its DB before exiting; on Windows we fall
+			// back to an ungraceful kill because SIGINT is not a real signal there.
+			if (process.platform === "win32") {
+				child.kill();
+			} else {
+				child.kill("SIGINT");
+			}
+		}
 	}
 
 	/** Run a prompt turn end-to-end: spawn agy, stream deltas, finalize. */
@@ -141,10 +116,9 @@ export class Adapter {
 			while (polling) {
 				try {
 					await pollOnce();
-					// agy retries 429s internally for minutes without exiting;
-					// stop it as soon as the first one lands in the DB.
+					// agy retries 429s for minutes without exiting; stop it now.
 					if (poller.quotaError) {
-						interrupt(child);
+						this.cancel(sessionId);
 						break;
 					}
 				} catch (err) {
@@ -183,8 +157,8 @@ export class Adapter {
 			hadUpdates: poller.hadUpdates,
 		};
 
-		if (poller.quotaError && !wasCancelled) {
-			outcome.error = formatQuotaError(poller.quotaError);
+		if (poller.quotaError) {
+			outcome.error = poller.quotaError;
 		} else if (!wasCancelled && exitCode !== 0) {
 			console.error(`[agy-acp] WARN: agy exited with status ${exitCode}`);
 			if (!poller.hadUpdates) {

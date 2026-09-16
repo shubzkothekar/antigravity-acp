@@ -3,7 +3,6 @@
 // newly-appended agent text and not-yet-sent tool steps on each poll.
 
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
-import type { ErrorDetails } from "./columns";
 import { ConversationDb, ERROR_MESSAGE_STEP_TYPE } from "./database";
 import { newConversationId } from "./scan";
 import { Translator } from "./translator";
@@ -24,7 +23,7 @@ export class StreamPoller {
 	private readonly translator: Translator;
 	private db: ConversationDb | null = null;
 	private boundId: string | null;
-	private _quotaError: ErrorDetails | null = null;
+	private _quotaError: string | null = null;
 
 	constructor(private readonly opts: StreamOptions) {
 		this.boundId = opts.conversationId;
@@ -43,9 +42,8 @@ export class StreamPoller {
 		return Math.max(this.translator.lastStepIdx, this.opts.baseStepIdx);
 	}
 
-	/** The first RESOURCE_EXHAUSTED error agy recorded this turn, if any. agy
-	 *  retries these silently for minutes, so the caller should stop it. */
-	get quotaError(): ErrorDetails | null {
+	/** agy's first RESOURCE_EXHAUSTED error this turn, if any. */
+	get quotaError(): string | null {
 		return this._quotaError;
 	}
 
@@ -66,17 +64,13 @@ export class StreamPoller {
 		}
 
 		const rows = this.db.readAfter(this.opts.baseStepIdx);
-		if (this._quotaError === null) {
-			for (const row of rows) {
-				const msg = row.error ? `${row.error.message} ${row.error.detail}` : "";
-				if (
-					row.stepType === ERROR_MESSAGE_STEP_TYPE &&
-					/RESOURCE_EXHAUSTED|quota/i.test(msg)
-				) {
-					this._quotaError = row.error ?? null;
-					break;
-				}
-			}
+		for (const row of rows) {
+			const text = row.error?.message || row.error?.detail;
+			if (
+				row.stepType === ERROR_MESSAGE_STEP_TYPE &&
+				text?.includes("RESOURCE_EXHAUSTED")
+			)
+				this._quotaError ??= text;
 		}
 		return this.translator.translate(rows);
 	}
