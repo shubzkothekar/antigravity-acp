@@ -120,6 +120,32 @@ describe("AgyAcpAgent", () => {
 		expect(res.stopReason).toBe("end_turn");
 	});
 
+	test("prompt records the steps of a failed turn before reporting the error", async () => {
+		// Otherwise the next prompt in this conversation re-reads the old 429
+		// steps and reports the quota error again after the quota has reset.
+		const session = {
+			cwd: process.cwd(),
+			conversationId: "c1",
+			lastStepIdx: 3,
+		};
+		spyOn(SessionManager.prototype, "ensure").mockResolvedValue(session as any);
+		spyOn(Adapter.prototype, "runPrompt").mockResolvedValue({
+			stopReason: "cancelled",
+			error: "Individual quota reached.",
+			conversationId: "c1",
+			lastStepIdx: 6,
+			hadUpdates: false,
+		});
+
+		await expect(
+			agent.prompt(
+				{ sessionId: "s1", prompt: [{ type: "text", text: "hi" }] } as any,
+				clientMock,
+			),
+		).rejects.toThrow("Individual quota reached.");
+		expect(session.lastStepIdx).toBe(6);
+	});
+
 	test("prompt formats ACP blocks into XML strings", async () => {
 		const runPromptSpy = spyOn(
 			Adapter.prototype,

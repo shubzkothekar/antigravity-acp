@@ -39,6 +39,32 @@ describe("formatQuotaError", () => {
 	});
 });
 
+describe("formatQuotaError reset times", () => {
+	const now = new Date(2026, 8, 16, 16, 41, 44).getTime();
+	const format = (tail: string) =>
+		formatQuotaError(
+			{
+				message: "",
+				detail: `API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached. ${tail}`,
+				stackTrace: "",
+			},
+			now,
+		);
+
+	test("counts days in the reset time", () => {
+		const refresh = new Date(2026, 8, 17, 18, 44, 44).toLocaleString("en-US");
+		expect(format("Resets in 1d2h3m.")).toBe(
+			`Individual quota reached.\n\nYour plan's baseline quota will refresh on ${refresh}.`,
+		);
+	});
+
+	test("keeps a reset time it cannot parse", () => {
+		expect(format("Resets in about a week.")).toBe(
+			"Individual quota reached. Resets in about a week.",
+		);
+	});
+});
+
 describe("Adapter", () => {
 	test("cancel should handle non-existent session gracefully", () => {
 		const adapter = new Adapter({
@@ -68,9 +94,11 @@ describe("Adapter", () => {
 
 describe("Adapter quota handling", () => {
 	let tempDir: string;
+	let killed: boolean;
 
 	beforeEach(() => {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "agy-quota-test-"));
+		killed = false;
 	});
 
 	afterEach(() => {
@@ -78,10 +106,9 @@ describe("Adapter quota handling", () => {
 		fs.rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	test("runPrompt stops agy and returns the quota message on a 429", async () => {
-		let killed = false;
-		// agy records the 429 as an ERROR_MESSAGE step, then keeps retrying
-		// until it is interrupted.
+	/** Stand-in for agy: records one 429 ERROR_MESSAGE step, then keeps
+	 *  retrying until killed, or exits cleanly after `exitAfterMs`. */
+	function mockAgy(errorText: string, exitAfterMs?: number) {
 		spyOn(Bun, "spawn").mockImplementation((() => {
 			const sqlite = new Database(conversationDbPath(tempDir, "conv"));
 			sqlite
@@ -91,11 +118,7 @@ describe("Adapter quota handling", () => {
 				.run();
 			const writer = new BinaryWriter();
 			writer.tag(24, 2).fork().tag(3, 2).fork();
-			writer
-				.tag(2, 2)
-				.string(
-					"API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 1m.",
-				);
+			writer.tag(2, 2).string(errorText);
 			writer.join().join();
 			sqlite
 				.query(
@@ -105,18 +128,22 @@ describe("Adapter quota handling", () => {
 			sqlite.close();
 
 			let exit: (code: number) => void = () => {};
+			const exited = new Promise<number>((r) => {
+				exit = r;
+			});
+			if (exitAfterMs !== undefined) setTimeout(() => exit(0), exitAfterMs);
 			return {
 				stderr: null,
-				exited: new Promise<number>((r) => {
-					exit = r;
-				}),
+				exited,
 				kill: () => {
 					killed = true;
 					exit(130);
 				},
 			};
 		}) as unknown as typeof Bun.spawn);
+	}
 
+	function runPrompt() {
 		const adapter = new Adapter({
 			workingDir: tempDir,
 			binary: "agy",
@@ -124,15 +151,28 @@ describe("Adapter quota handling", () => {
 			skipNarration: false,
 		});
 		const client = { update: async () => {} } as unknown as AcpClient;
-		const outcome = await adapter.runPrompt(
-			"s1",
-			newSession(tempDir),
-			"hi",
-			client,
+		return adapter.runPrompt("s1", newSession(tempDir), "hi", client);
+	}
+
+	test("stops agy and returns the quota message on a usage-limit 429", async () => {
+		mockAgy(
+			"API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 7m11s.",
 		);
+		const outcome = await runPrompt();
 
 		expect(killed).toBe(true);
 		expect(outcome.error).toStartWith("Individual quota reached.");
 		expect(outcome.error).toContain("baseline quota will refresh on");
+	});
+
+	test("lets agy retry a per-minute rate limit", async () => {
+		mockAgy(
+			"API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Rate limit exceeded. Resets in 20s.",
+			300,
+		);
+		const outcome = await runPrompt();
+
+		expect(killed).toBe(false);
+		expect(outcome.error).toBeUndefined();
 	});
 });

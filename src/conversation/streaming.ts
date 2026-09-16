@@ -43,7 +43,7 @@ export class StreamPoller {
 		return Math.max(this.translator.lastStepIdx, this.opts.baseStepIdx);
 	}
 
-	/** agy's first RESOURCE_EXHAUSTED error this turn, if any. */
+	/** agy's latest RESOURCE_EXHAUSTED error this turn, if any. */
 	get quotaError(): ErrorDetails | null {
 		return this._quotaError;
 	}
@@ -71,7 +71,7 @@ export class StreamPoller {
 				stepType === ERROR_MESSAGE_STEP_TYPE &&
 				(error.message || error.detail).includes("RESOURCE_EXHAUSTED")
 			)
-				this._quotaError ??= error;
+				this._quotaError = error;
 		}
 		return this.translator.translate(rows);
 	}
