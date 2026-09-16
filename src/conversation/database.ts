@@ -12,6 +12,7 @@ import { StepPayload } from "../gen/steps";
 import type { StepRow } from "../types";
 import {
 	decodeErrorDetails,
+	decodeErrorMessageStep,
 	decodePermissions,
 	decodeTaskDetails,
 } from "./columns";
@@ -42,13 +43,21 @@ function decodeColumn<T>(v: unknown, decode: (b: Uint8Array) => T): T | null {
 	return bytes.length === 0 ? null : decode(bytes);
 }
 
+/** step_type of agy's system ERROR_MESSAGE steps (e.g. API 429 retries). */
+export const ERROR_MESSAGE_STEP_TYPE = 17;
+
 function rowToStep(r: RawRow): StepRow {
+	const payload = toUint8(r.step_payload);
 	return {
 		idx: r.idx,
 		stepType: r.step_type,
 		status: r.status ?? 0,
-		stepPayload: StepPayload.decode(toUint8(r.step_payload)),
-		error: decodeColumn(r.error_details, decodeErrorDetails),
+		stepPayload: StepPayload.decode(payload),
+		error:
+			decodeColumn(r.error_details, decodeErrorDetails) ??
+			(r.step_type === ERROR_MESSAGE_STEP_TYPE
+				? decodeErrorMessageStep(payload)
+				: null),
 		permission: decodeColumn(r.permissions, decodePermissions),
 		task: decodeColumn(r.task_details, decodeTaskDetails),
 	};

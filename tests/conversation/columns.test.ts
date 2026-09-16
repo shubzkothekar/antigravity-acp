@@ -2,12 +2,30 @@ import { describe, expect, test } from "bun:test";
 import { BinaryWriter } from "@bufbuild/protobuf/wire";
 import {
 	decodeErrorDetails,
+	decodeErrorMessageStep,
 	decodePermissions,
 	decodeTaskDetails,
 } from "../../src/conversation/columns";
 import { TaskDetails } from "../../src/gen/steps";
+import { QUOTA_STEP_PAYLOAD_HEX } from "../fixtures/quota-step";
 
 describe("conversation/columns", () => {
+	describe("decodeErrorMessageStep", () => {
+		const payload = Buffer.from(QUOTA_STEP_PAYLOAD_HEX, "hex");
+
+		test("extracts the quota error and its Error ID", () => {
+			const e = decodeErrorMessageStep(new Uint8Array(payload));
+			expect(e?.detail).toBe(
+				"API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 7m11s.",
+			);
+			expect(e?.id).toBe("00000000-0000-4000-8000-000000000002-1");
+		});
+
+		test("returns null when the payload has no error message", () => {
+			expect(decodeErrorMessageStep(new Uint8Array([8, 14]))).toBeNull();
+		});
+	});
+
 	describe("decodeErrorDetails", () => {
 		test("decodes full error details", () => {
 			const writer = new BinaryWriter();

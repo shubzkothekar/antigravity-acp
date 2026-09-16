@@ -17,6 +17,8 @@ export interface ErrorDetails {
 	detail: string;
 	/** Full error with attached stack trace. */
 	stackTrace: string;
+	/** Error ID shown by the Antigravity IDE (field 6), when present. */
+	id?: string;
 }
 
 /**
@@ -39,11 +41,38 @@ export function decodeErrorDetails(input: Uint8Array): ErrorDetails {
 			case 3:
 				out.stackTrace = r.string();
 				break;
+			case 6:
+				out.id = r.string();
+				break;
 			default:
 				r.skip(tag & 7);
 		}
 	}
 	return out;
+}
+
+/**
+ * ERROR_MESSAGE steps (step_type 17) carry no `error_details` column; the error
+ * sits in step_payload as { 24: { 3: error_details } }. Returns null when absent.
+ */
+export function decodeErrorMessageStep(input: Uint8Array): ErrorDetails | null {
+	const inner = readLengthDelimited(input, 24);
+	if (!inner) return null;
+	const details = readLengthDelimited(inner, 3);
+	return details ? decodeErrorDetails(details) : null;
+}
+
+function readLengthDelimited(
+	input: Uint8Array,
+	field: number,
+): Uint8Array | null {
+	const r = new BinaryReader(input);
+	while (r.pos < r.len) {
+		const tag = r.uint32();
+		if (tag >>> 3 === field && (tag & 7) === 2) return r.bytes();
+		r.skip(tag & 7);
+	}
+	return null;
 }
 
 export interface PermissionInfo {
