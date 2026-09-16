@@ -12,10 +12,32 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { BinaryWriter } from "@bufbuild/protobuf/wire";
-import { Adapter } from "../../src/acp/adapter";
+import { Adapter, formatQuotaError } from "../../src/acp/adapter";
 import type { AcpClient } from "../../src/acp/client";
 import { conversationDbPath } from "../../src/conversation/database";
 import { newSession } from "../../src/types/session";
+
+describe("formatQuotaError", () => {
+	test("formats the message, Error ID, and refresh time like the IDE", () => {
+		const now = new Date(2026, 8, 16, 16, 41, 44).getTime();
+		const text = formatQuotaError(
+			{
+				message: "",
+				detail:
+					"API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 7m11s.",
+				stackTrace: "",
+				id: "error-id-1",
+			},
+			now,
+		);
+		const refresh = new Date(2026, 8, 16, 16, 48, 55).toLocaleString("en-US");
+		expect(text).toBe(
+			"Individual quota reached. Please upgrade your subscription to increase your limits.\n\n" +
+				"Error ID: error-id-1\n\n" +
+				`Your plan's baseline quota will refresh on ${refresh}.`,
+		);
+	});
+});
 
 describe("Adapter", () => {
 	test("cancel should handle non-existent session gracefully", () => {
@@ -110,8 +132,7 @@ describe("Adapter quota handling", () => {
 		);
 
 		expect(killed).toBe(true);
-		expect(outcome.error).toBe(
-			"API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 1m.",
-		);
+		expect(outcome.error).toStartWith("Individual quota reached.");
+		expect(outcome.error).toContain("baseline quota will refresh on");
 	});
 });

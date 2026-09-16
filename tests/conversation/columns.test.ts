@@ -10,17 +10,19 @@ import { TaskDetails } from "../../src/gen/steps";
 
 describe("conversation/columns", () => {
 	describe("decodeErrorMessageStep", () => {
-		test("extracts the error from step_payload", () => {
+		test("extracts the error and its Error ID from step_payload", () => {
 			const writer = new BinaryWriter();
-			// 24: { 3: error_details { 2: detail } }
+			// 24: { 3: error_details { 2: detail, 6: id } }
 			writer.tag(24, 2).fork();
 			writer.tag(3, 2).fork();
 			writer.tag(2, 2).string("Individual quota reached.");
+			writer.tag(6, 2).string("error-id-1");
 			writer.join();
 			writer.join();
 
 			const decoded = decodeErrorMessageStep(writer.finish());
 			expect(decoded?.detail).toBe("Individual quota reached.");
+			expect(decoded?.id).toBe("error-id-1");
 		});
 
 		test("returns null when the payload has no error message", () => {

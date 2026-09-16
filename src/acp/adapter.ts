@@ -4,12 +4,31 @@
 
 import { buildAgyArgs, extraArgsFromEnv, spawnAgy } from "../agy/process";
 import { POLL_INTERVAL_MS } from "../constants";
+import type { ErrorDetails } from "../conversation/columns";
 import { conversationSnapshot } from "../conversation/scan";
 import { StreamPoller } from "../conversation/streaming";
 import type { Session } from "../types/session";
 import type { AcpClient } from "./client";
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Format agy's 429 text like the Antigravity IDE: the message, its Error ID,
+ *  and the clock time the quota refreshes. */
+export function formatQuotaError(e: ErrorDetails, now = Date.now()): string {
+	const text = e.message || e.detail;
+	// "API error (attempt 1): RESOURCE_EXHAUSTED (code 429): <message> Resets in 7m11s."
+	const lines = [text.replace(/^.*\(code 429\):\s*|\s*Resets in .*$/g, "")];
+	if (e.id) lines.push(`Error ID: ${e.id}`);
+	const reset = text.match(/Resets in (?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/);
+	if (reset?.[0].match(/\d/)) {
+		const [, h = 0, m = 0, s = 0] = reset;
+		const at = new Date(now + ((+h * 60 + +m) * 60 + +s) * 1000);
+		lines.push(
+			`Your plan's baseline quota will refresh on ${at.toLocaleString("en-US")}.`,
+		);
+	}
+	return lines.join("\n\n");
+}
 
 export interface PromptOutcome {
 	stopReason: "end_turn" | "cancelled";
@@ -158,7 +177,7 @@ export class Adapter {
 		};
 
 		if (poller.quotaError) {
-			outcome.error = poller.quotaError;
+			outcome.error = formatQuotaError(poller.quotaError);
 		} else if (!wasCancelled && exitCode !== 0) {
 			console.error(`[agy-acp] WARN: agy exited with status ${exitCode}`);
 			if (!poller.hadUpdates) {

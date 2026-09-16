@@ -17,6 +17,8 @@ export interface ErrorDetails {
 	detail: string;
 	/** Full error with attached stack trace. */
 	stackTrace: string;
+	/** Error ID shown by the Antigravity IDE (field 6), when present. */
+	id?: string;
 }
 
 /**
@@ -38,6 +40,9 @@ export function decodeErrorDetails(input: Uint8Array): ErrorDetails {
 				break;
 			case 3:
 				out.stackTrace = r.string();
+				break;
+			case 6:
+				out.id = r.string();
 				break;
 			default:
 				r.skip(tag & 7);
