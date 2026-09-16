@@ -7,22 +7,28 @@ import {
 	decodeTaskDetails,
 } from "../../src/conversation/columns";
 import { TaskDetails } from "../../src/gen/steps";
-import { QUOTA_STEP_PAYLOAD_HEX } from "../fixtures/quota-step";
 
 describe("conversation/columns", () => {
 	describe("decodeErrorMessageStep", () => {
-		const payload = Buffer.from(QUOTA_STEP_PAYLOAD_HEX, "hex");
+		test("extracts the error and its Error ID from step_payload", () => {
+			const writer = new BinaryWriter();
+			// 24: { 3: error_details { 2: detail, 6: id } }
+			writer.tag(24, 2).fork();
+			writer.tag(3, 2).fork();
+			writer.tag(2, 2).string("Individual quota reached.");
+			writer.tag(6, 2).string("error-id-1");
+			writer.join();
+			writer.join();
 
-		test("extracts the quota error and its Error ID", () => {
-			const e = decodeErrorMessageStep(new Uint8Array(payload));
-			expect(e?.detail).toBe(
-				"API error (attempt 1): RESOURCE_EXHAUSTED (code 429): Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 7m11s.",
-			);
-			expect(e?.id).toBe("00000000-0000-4000-8000-000000000002-1");
+			const decoded = decodeErrorMessageStep(writer.finish());
+			expect(decoded?.detail).toBe("Individual quota reached.");
+			expect(decoded?.id).toBe("error-id-1");
 		});
 
 		test("returns null when the payload has no error message", () => {
-			expect(decodeErrorMessageStep(new Uint8Array([8, 14]))).toBeNull();
+			const writer = new BinaryWriter();
+			writer.tag(1, 0).uint32(17);
+			expect(decodeErrorMessageStep(writer.finish())).toBeNull();
 		});
 	});
 
