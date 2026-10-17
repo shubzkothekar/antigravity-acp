@@ -101,8 +101,22 @@ auto-downloads `agy` on first launch if not present next to the executable.
 ## ACP surface
 
 - **initialize** — advertises `loadSession`, `additionalDirectories`,
-  `list`/`delete`/`resume`/`close`, `embeddedContext`.
-- **session/new** — accepts `cwd` and `additionalDirectories`; returns the session configuration options (including modes and available models).
+  `list`/`delete`/`resume`/`close`/`fork`, `embeddedContext`, and
+  `mcpCapabilities` (stdio only: `http: false`, `sse: false`).
+- **session/new** — accepts `cwd`, `additionalDirectories` and `mcpServers`; returns the session configuration options (including modes and available models).
+- **Session MCP servers** — `agy` has no per-run MCP flag, so the stdio servers
+  in `mcpServers` (on `session/new`, `session/load`, `session/resume` and
+  `session/fork`) are written as a one-plugin folder,
+  `$TMPDIR/~agy-acp-mcp-<uid>/<pid>-<sessionId>/.agents/plugins/acp-session/`,
+  which is passed to `agy` with `--add-dir`. (It lives in the temp dir because
+  `agy` sorts its workspaces by path and makes the first one the agent's
+  working directory; a folder under `~/.agy-acp` would win over the project.)
+  Each session sees only its own servers; the global `agy mcp` config is never
+  touched. The folder (mode 0700, it may hold tokens) is written again if the
+  OS cleans it, removed on `session/close`, `session/delete` and exit, and
+  folders left by a crashed adapter are swept on the next start. Servers
+  are kept in memory only, never in `sessions.json`. HTTP and SSE servers are
+  skipped with a log line.
 - **session/set_config_option** — model and mode selection; persisted per session.
 - **session/load** — replays full conversation history from the `agy` SQLite DB,
   including tool calls, task/permission/error decorators, and title updates.
@@ -125,6 +139,7 @@ src/
     binary.ts                 resolve binary: SEA-local / bin/ / $AGY_BIN / PATH
     installer.ts              shared download + SHA-256 verify + extract logic
     process.ts                Bun.spawn, arg building, model discovery
+    mcp.ts                    per-session plugin folder for the session's MCP servers
   constants/
     index.ts                  shared constants (paths, poll intervals, modes, commands)
   conversation/

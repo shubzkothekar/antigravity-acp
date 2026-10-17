@@ -71,6 +71,9 @@ export interface AgyArgsOptions {
 	prompt: string;
 	/** Extra args from $AGY_EXTRA_ARGS, already split. */
 	extraArgs?: string[];
+	/** Folder holding the session's MCP plugin (see agy/mcp.ts), if any. agy
+	 *  loads `.agents/plugins/` from every --add-dir root. */
+	mcpRoot?: string | null;
 }
 
 /** Build the agy CLI argument vector for a single prompt turn. */
@@ -79,6 +82,7 @@ export function buildAgyArgs(opts: AgyArgsOptions): string[] {
 	for (const dir of opts.additionalDirs ?? []) {
 		args.push("--add-dir", dir);
 	}
+	if (opts.mcpRoot) args.push("--add-dir", opts.mcpRoot);
 	if (opts.conversationId) args.push("--conversation", opts.conversationId);
 	if (opts.modelId) args.push("--model", opts.modelId);
 	if (opts.permissionMode === "plan") {

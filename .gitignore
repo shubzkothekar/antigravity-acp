@@ -36,3 +36,6 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # Downloaded agy binaries (placed by scripts/postinstall.ts, not committed)
 /bin/agy
 /bin/agy.exe
+
+# Leftovers of interrupted `bun build --compile` runs
+*.bun-build

@@ -37,6 +37,9 @@ export function runAcp() {
 		skipNarration,
 		version: pkg.version ?? "0.0.0",
 	});
+	// Per-session MCP plugin folders hold client tokens: remove them on any
+	// orderly exit (index.ts routes SIGINT/SIGTERM and stdin close to exit).
+	process.on("exit", () => agentImpl.dispose());
 
 	// ndJsonStream(writableToClient, readableFromClient) — both native Web streams.
 	const stream = ndJsonStream(stdoutWritable(), Bun.stdin.stream());
@@ -65,6 +68,16 @@ export function runAcp() {
 		)
 		.onRequest(methods.agent.session.resume, (ctx) =>
 			agentImpl.resumeSession(
+				ctx.params as {
+					sessionId?: string;
+					cwd?: string;
+					additionalDirectories?: string[];
+				},
+				new AcpClient(ctx.client),
+			),
+		)
+		.onRequest(methods.agent.session.fork, (ctx) =>
+			agentImpl.forkSession(
 				ctx.params as {
 					sessionId?: string;
 					cwd?: string;

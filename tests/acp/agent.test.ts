@@ -21,6 +21,7 @@ const _PLAN_MODE_ID = "plan";
 describe("AgyAcpAgent", () => {
 	let agent: AgyAcpAgent;
 	let clientMock: any;
+	let mcpDir: string;
 
 	beforeEach(() => {
 		clientMock = { update: mock(async () => {}) };
@@ -55,14 +56,17 @@ describe("AgyAcpAgent", () => {
 			hadUpdates: true,
 		});
 
+		mcpDir = fs.mkdtempSync(path.join(os.tmpdir(), "agy-acp-agent-mcp-"));
 		agent = new AgyAcpAgent({
 			workingDir: process.cwd(),
 			skipNarration: false,
+			mcpSessionsDir: mcpDir,
 		} as any);
 	});
 
 	afterEach(() => {
 		mock.restore();
+		fs.rmSync(mcpDir, { recursive: true, force: true });
 	});
 
 	test("initialize returns capabilities", async () => {
@@ -99,6 +103,44 @@ describe("AgyAcpAgent", () => {
 			clientMock,
 		);
 		expect(res).toBeDefined();
+	});
+
+	test("initialize advertises session/fork", async () => {
+		const result = await agent.initialize();
+		expect(result.agentCapabilities.sessionCapabilities?.fork).toEqual({});
+	});
+
+	test("forkSession without an agy conversation yet starts an unbound session", async () => {
+		const created = { cwd: "/src" };
+		SessionManager.prototype.create.mockReturnValue({
+			sessionId: "s2",
+			session: created,
+		});
+		SessionManager.prototype.ensure.mockResolvedValue({
+			cwd: "/src",
+			additionalDirs: ["/extra"],
+			conversationId: null,
+			lastStepIdx: -1,
+			modelId: "m1",
+			permissionMode: "plan",
+			sandbox: true,
+			title: "T",
+		});
+		const res = await agent.forkSession({ sessionId: "s1" }, clientMock);
+		expect(res.sessionId).toBe("s2");
+		expect(created).toMatchObject({
+			conversationId: null,
+			lastStepIdx: -1,
+			modelId: "m1",
+			permissionMode: "plan",
+			sandbox: true,
+		});
+		expect(SessionManager.prototype.create).toHaveBeenCalledWith("/src", ["/extra"]);
+	});
+
+	test("forkSession rejects an unknown source session", async () => {
+		SessionManager.prototype.ensure.mockResolvedValue(null);
+		expect(agent.forkSession({ sessionId: "nope" }, clientMock)).rejects.toThrow();
 	});
 
 	test("listSessions returns wrapped sessions", async () => {
@@ -292,5 +334,124 @@ describe("AgyAcpAgent", () => {
 		} finally {
 			fs.rmSync(imagePath, { force: true });
 		}
+	});
+
+	describe("session MCP servers", () => {
+		const bridge = {
+			name: "bb",
+			command: "/usr/bin/node",
+			args: ["bridge.js"],
+			env: [{ name: "BB_TOKEN", value: "t1" }],
+		};
+		const lastMcpRoot = () => {
+			const calls = (Adapter.prototype.runPrompt as any).mock.calls;
+			return calls[calls.length - 1][4];
+		};
+		const prompt = () =>
+			agent.prompt(
+				{ sessionId: "s1", prompt: [{ type: "text", text: "hi" }] } as any,
+				clientMock,
+			);
+		const mcpConfig = (root: string) =>
+			JSON.parse(
+				fs.readFileSync(
+					path.join(root, ".agents/plugins/acp-session/mcp_config.json"),
+					"utf8",
+				),
+			);
+
+		test("initialize advertises stdio-only MCP support", () => {
+			expect(agent.initialize().agentCapabilities.mcpCapabilities).toEqual({
+				http: false,
+				sse: false,
+			});
+		});
+
+		test("session/new servers reach every turn of that session", async () => {
+			agent.newSession({ mcpServers: [bridge] } as any, clientMock);
+			await prompt();
+			const root = lastMcpRoot();
+			expect(path.dirname(root)).toBe(mcpDir);
+			expect(mcpConfig(root).mcpServers.bb.env.BB_TOKEN).toBe("t1");
+		});
+
+		test("a session without servers adds no folder", async () => {
+			agent.newSession({ mcpServers: [] } as any, clientMock);
+			await prompt();
+			expect(lastMcpRoot()).toBeNull();
+			expect(fs.readdirSync(mcpDir)).toEqual([]);
+		});
+
+		test("session/load and session/resume replace the servers; leaving the field out keeps them", async () => {
+			await agent.loadSession(
+				{ sessionId: "s1", mcpServers: [bridge] } as any,
+				clientMock,
+			);
+			await prompt();
+			expect(mcpConfig(lastMcpRoot()).mcpServers.bb).toBeDefined();
+
+			const fresh = { ...bridge, env: [{ name: "BB_TOKEN", value: "t2" }] };
+			await agent.resumeSession(
+				{ sessionId: "s1", mcpServers: [fresh] } as any,
+				clientMock,
+			);
+			await prompt();
+			expect(mcpConfig(lastMcpRoot()).mcpServers.bb.env.BB_TOKEN).toBe("t2");
+
+			await agent.resumeSession({ sessionId: "s1" } as any, clientMock);
+			await prompt();
+			expect(mcpConfig(lastMcpRoot()).mcpServers.bb.env.BB_TOKEN).toBe("t2");
+		});
+
+		test("session/fork uses the servers sent for the fork, not the source's", async () => {
+			(SessionManager.prototype.create as any).mockReturnValue({
+				sessionId: "s1",
+				session: { cwd: process.cwd() },
+			});
+			(SessionManager.prototype.ensure as any).mockResolvedValue({
+				cwd: process.cwd(),
+				conversationId: null,
+			});
+			await agent.forkSession({ sessionId: "src", mcpServers: [] } as any, clientMock);
+			await prompt();
+			expect(lastMcpRoot()).toBeNull();
+		});
+
+		test("http servers are skipped", async () => {
+			agent.newSession(
+				{
+					mcpServers: [
+						{ type: "http", name: "web", url: "https://x/mcp", headers: [] },
+					],
+				} as any,
+				clientMock,
+			);
+			await prompt();
+			expect(lastMcpRoot()).toBeNull();
+		});
+
+		test("closing or deleting a session removes its folder; dispose removes the rest", async () => {
+			agent.newSession({ mcpServers: [bridge] } as any, clientMock);
+			await prompt();
+			const root = lastMcpRoot();
+			agent.closeSession({ sessionId: "s1" });
+			expect(fs.existsSync(root)).toBe(false);
+
+			agent.newSession({ mcpServers: [bridge] } as any, clientMock);
+			await agent.deleteSession({ sessionId: "s1" });
+			expect(fs.readdirSync(mcpDir)).toEqual([]);
+
+			agent.newSession({ mcpServers: [bridge] } as any, clientMock);
+			agent.dispose();
+			expect(fs.readdirSync(mcpDir)).toEqual([]);
+		});
+
+		test("session/new never writes the servers to the session store", async () => {
+			agent.newSession({ mcpServers: [bridge] } as any, clientMock);
+			await prompt();
+			for (const call of (SessionManager.prototype.persist as any).mock.calls) {
+				expect(JSON.stringify(call)).not.toContain("BB_TOKEN");
+			}
+		});
 	});
 });

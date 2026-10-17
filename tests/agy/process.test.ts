@@ -76,6 +76,38 @@ describe("agy/process.ts", () => {
 			]);
 		});
 
+		it("adds the session's MCP plugin folder as one more --add-dir", () => {
+			const args = buildAgyArgs({
+				workingDir: "/cwd",
+				additionalDirs: ["/dir1"],
+				conversationId: null,
+				modelId: null,
+				permissionMode: null,
+				prompt: "hello",
+				mcpRoot: "/state/mcp-sessions/1-s1",
+			});
+			expect(args.slice(0, 6)).toEqual([
+				"--add-dir",
+				"/cwd",
+				"--add-dir",
+				"/dir1",
+				"--add-dir",
+				"/state/mcp-sessions/1-s1",
+			]);
+		});
+
+		it("adds no extra --add-dir without an MCP plugin folder", () => {
+			const args = buildAgyArgs({
+				workingDir: "/cwd",
+				conversationId: null,
+				modelId: null,
+				permissionMode: null,
+				prompt: "hello",
+				mcpRoot: null,
+			});
+			expect(args.filter((a) => a === "--add-dir")).toHaveLength(1);
+		});
+
 		it("should add additionalDirs", () => {
 			const args = buildAgyArgs({
 				workingDir: "/cwd",

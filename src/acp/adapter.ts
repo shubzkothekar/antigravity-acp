@@ -83,12 +83,14 @@ export class Adapter {
 		}
 	}
 
-	/** Run a prompt turn end-to-end: spawn agy, stream deltas, finalize. */
+	/** Run a prompt turn end-to-end: spawn agy, stream deltas, finalize.
+	 *  `mcpRoot` is the session's MCP plugin folder (see agy/mcp.ts), if any. */
 	async runPrompt(
 		sessionId: string,
 		session: Session,
 		promptText: string,
 		client: AcpClient,
+		mcpRoot: string | null = null,
 	): Promise<PromptOutcome> {
 		this.cancelled.delete(sessionId);
 
@@ -115,6 +117,7 @@ export class Adapter {
 			sandbox: session.sandbox,
 			prompt: promptArg,
 			extraArgs: extraArgsFromEnv(),
+			mcpRoot,
 		});
 
 		let child: Bun.Subprocess;
