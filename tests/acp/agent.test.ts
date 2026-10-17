@@ -101,6 +101,44 @@ describe("AgyAcpAgent", () => {
 		expect(res).toBeDefined();
 	});
 
+	test("initialize advertises session/fork", async () => {
+		const result = await agent.initialize();
+		expect(result.agentCapabilities.sessionCapabilities?.fork).toEqual({});
+	});
+
+	test("forkSession without an agy conversation yet starts an unbound session", async () => {
+		const created = { cwd: "/src" };
+		SessionManager.prototype.create.mockReturnValue({
+			sessionId: "s2",
+			session: created,
+		});
+		SessionManager.prototype.ensure.mockResolvedValue({
+			cwd: "/src",
+			additionalDirs: ["/extra"],
+			conversationId: null,
+			lastStepIdx: -1,
+			modelId: "m1",
+			permissionMode: "plan",
+			sandbox: true,
+			title: "T",
+		});
+		const res = await agent.forkSession({ sessionId: "s1" }, clientMock);
+		expect(res.sessionId).toBe("s2");
+		expect(created).toMatchObject({
+			conversationId: null,
+			lastStepIdx: -1,
+			modelId: "m1",
+			permissionMode: "plan",
+			sandbox: true,
+		});
+		expect(SessionManager.prototype.create).toHaveBeenCalledWith("/src", ["/extra"]);
+	});
+
+	test("forkSession rejects an unknown source session", async () => {
+		SessionManager.prototype.ensure.mockResolvedValue(null);
+		expect(agent.forkSession({ sessionId: "nope" }, clientMock)).rejects.toThrow();
+	});
+
 	test("listSessions returns wrapped sessions", async () => {
 		const res = await agent.listSessions({});
 		expect(res.sessions.length).toBe(1);

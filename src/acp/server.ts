@@ -73,6 +73,16 @@ export function runAcp() {
 				new AcpClient(ctx.client),
 			),
 		)
+		.onRequest(methods.agent.session.fork, (ctx) =>
+			agentImpl.forkSession(
+				ctx.params as {
+					sessionId?: string;
+					cwd?: string;
+					additionalDirectories?: string[];
+				},
+				new AcpClient(ctx.client),
+			),
+		)
 		.onRequest(methods.agent.session.list, (ctx) =>
 			agentImpl.listSessions(ctx.params as { cwd?: string }),
 		)

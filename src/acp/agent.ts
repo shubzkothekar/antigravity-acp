@@ -8,6 +8,7 @@ import type {
 	AuthenticateResponse,
 	CloseSessionResponse,
 	DeleteSessionResponse,
+	ForkSessionResponse,
 	InitializeResponse,
 	ListSessionsResponse,
 	LoadSessionResponse,
@@ -32,6 +33,7 @@ import {
 	SANDBOX_CONFIG_ID,
 	STATE_DIR,
 } from "../constants";
+import { forkConversation } from "../conversation/fork";
 import { ReplayCache } from "../conversation/replay";
 import { SessionStore } from "../store/sessionStore";
 import { newSession, type Session } from "../types/session";
@@ -146,6 +148,9 @@ export class AgyAcpAgent {
 					delete: {},
 					resume: {},
 					close: {},
+					// Fork clones the agy conversation DB under a new id (see
+					// conversation/fork.ts); only whole-session (tip) forks.
+					fork: {},
 					additionalDirectories: {},
 				},
 				auth: { logout: {} },
@@ -255,6 +260,60 @@ export class AgyAcpAgent {
 		this.activeClients.set(sessionId, client);
 		this.announceSession(client, sessionId, session);
 		return this.configResult(session);
+	}
+
+	/**
+	 * ACP session/fork (unstable): start a new session that carries the source's
+	 * history. agy cannot fork natively, so the source conversation DB is cloned
+	 * under a fresh id and the new session resumes that clone. History is not
+	 * replayed; the client already has the source timeline.
+	 */
+	async forkSession(
+		params: {
+			sessionId?: string;
+			cwd?: string;
+			additionalDirectories?: string[];
+		},
+		client: AcpClient,
+	): Promise<ForkSessionResponse> {
+		const sourceId = this.requireSessionId(params.sessionId);
+		const source = await this.sessions.ensure(sourceId);
+		if (!source) throw RequestError.resourceNotFound(sourceId);
+
+		let conversationId: string | null = null;
+		let lastStepIdx = -1;
+		if (source.conversationId) {
+			try {
+				const forked = forkConversation(
+					this.config.conversationsDir,
+					source.conversationId,
+				);
+				conversationId = forked.conversationId;
+				lastStepIdx = forked.lastStepIdx;
+			} catch (err) {
+				throw RequestError.internalError(
+					undefined,
+					`could not fork agy conversation: ${(err as Error).message}`,
+				);
+			}
+		}
+
+		const cwd = params.cwd || source.cwd || this.config.workingDir;
+		const { sessionId, session } = this.sessions.create(
+			cwd,
+			params.additionalDirectories ?? source.additionalDirs,
+		);
+		session.conversationId = conversationId;
+		session.lastStepIdx = lastStepIdx;
+		session.modelId = source.modelId;
+		session.permissionMode = source.permissionMode;
+		session.sandbox = source.sandbox;
+		session.title = source.title;
+		await this.sessions.persist(sessionId, session);
+
+		this.activeClients.set(sessionId, client);
+		this.announceSession(client, sessionId, session);
+		return { sessionId, ...this.configResult(session) };
 	}
 
 	/** List all known sessions. */
