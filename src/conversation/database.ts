@@ -13,6 +13,7 @@ import type { StepRow } from "../types";
 import {
 	decodeErrorDetails,
 	decodeErrorMessageStep,
+	decodeModelUsage,
 	decodePermissions,
 	decodeTaskDetails,
 	decodeToolOutput,
@@ -55,6 +56,7 @@ function rowToStep(r: RawRow): StepRow {
 		status: r.status ?? 0,
 		stepPayload: StepPayload.decode(rawPayload),
 		toolOutput: decodeColumn(rawPayload, decodeToolOutput),
+		usage: decodeColumn(rawPayload, decodeModelUsage),
 		error:
 			decodeColumn(r.error_details, decodeErrorDetails) ??
 			(r.step_type === ERROR_MESSAGE_STEP_TYPE

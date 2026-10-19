@@ -42,6 +42,10 @@ function mockRunCommandStep(
 	);
 }
 
+function mockUsageStep(idx: number, usage: Record<string, number>): StepRow {
+	return { ...mockStep(idx, 15, { agentText: { text: "" } }), usage } as any;
+}
+
 describe("conversation/translator", () => {
 	describe("stream mode", () => {
 		test("emits text deltas incrementally", () => {
@@ -87,21 +91,27 @@ describe("conversation/translator", () => {
 			});
 
 			// First poll: step still running (agy status 2 → in_progress).
-			const updates1 = translator.translate([mockRunCommandStep(3, "call_1", 2)]);
+			const updates1 = translator.translate([
+				mockRunCommandStep(3, "call_1", 2),
+			]);
 			expect(updates1.length).toBe(1);
 			expect(updates1[0].sessionUpdate).toBe("tool_call");
 			expect((updates1[0] as any).status).toBe("in_progress");
 			expect((updates1[0] as any).toolCallId).toBe("call_1");
 
 			// Later poll: same row, agy has marked it completed (status 3).
-			const updates2 = translator.translate([mockRunCommandStep(3, "call_1", 3)]);
+			const updates2 = translator.translate([
+				mockRunCommandStep(3, "call_1", 3),
+			]);
 			expect(updates2.length).toBe(1);
 			expect(updates2[0].sessionUpdate).toBe("tool_call_update");
 			expect((updates2[0] as any).status).toBe("completed");
 			expect((updates2[0] as any).toolCallId).toBe("call_1");
 
 			// Yet another poll of the now-terminal row: nothing more to send.
-			const updates3 = translator.translate([mockRunCommandStep(3, "call_1", 3)]);
+			const updates3 = translator.translate([
+				mockRunCommandStep(3, "call_1", 3),
+			]);
 			expect(updates3.length).toBe(0);
 		});
 
@@ -112,7 +122,9 @@ describe("conversation/translator", () => {
 			});
 
 			translator.translate([mockRunCommandStep(4, "call_2", 2)]);
-			const updates = translator.translate([mockRunCommandStep(4, "call_2", 7)]);
+			const updates = translator.translate([
+				mockRunCommandStep(4, "call_2", 7),
+			]);
 			expect(updates.length).toBe(1);
 			expect(updates[0].sessionUpdate).toBe("tool_call_update");
 			expect((updates[0] as any).status).toBe("failed");
@@ -125,7 +137,9 @@ describe("conversation/translator", () => {
 			});
 
 			translator.translate([mockRunCommandStep(5, "call_3", 2)]);
-			const updates = translator.translate([mockRunCommandStep(5, "call_3", 2)]);
+			const updates = translator.translate([
+				mockRunCommandStep(5, "call_3", 2),
+			]);
 			expect(updates.length).toBe(0);
 		});
 
@@ -143,6 +157,104 @@ describe("conversation/translator", () => {
 			// isNarration might require specific text. If it doesn't match, we will just test it anyway.
 			// Actually, isNarration("I will...") usually returns true.
 			// We can mock `isNarration` if needed, but since it's a unit test we can just test the behavior.
+		});
+	});
+
+	describe("context usage", () => {
+		test("emits usage_update with the step's buckets and the window estimate", () => {
+			const translator = new Translator({
+				mode: "stream",
+				skipNarration: false,
+			});
+
+			const updates = translator.translate([
+				mockUsageStep(3, {
+					inputTokens: 11751,
+					cacheReadTokens: 16609,
+					reasoningTokens: 165,
+					visibleOutputTokens: 60,
+				}),
+			]);
+
+			const usageUpdate = updates.find(
+				(u) => u.sessionUpdate === "usage_update",
+			) as any;
+			expect(usageUpdate.used).toBe(28360);
+			expect(usageUpdate.size).toBe(1_000_000);
+			expect(usageUpdate._meta.agy).toEqual({
+				inputTokens: 11751,
+				cacheReadTokens: 16609,
+				reasoningTokens: 165,
+				visibleOutputTokens: 60,
+				// The window is the built-in estimate here, so a client can hide the ratio.
+				windowEstimated: true,
+			});
+		});
+
+		test("does not repeat usage for a step that is re-read while streaming", () => {
+			const translator = new Translator({
+				mode: "stream",
+				skipNarration: false,
+			});
+			const usage = {
+				inputTokens: 11751,
+				cacheReadTokens: 0,
+				reasoningTokens: 1,
+				visibleOutputTokens: 2,
+			};
+
+			const first = translator.translate([mockUsageStep(3, usage)]);
+			const second = translator.translate([mockUsageStep(3, usage)]);
+
+			expect(
+				first.filter((u) => u.sessionUpdate === "usage_update"),
+			).toHaveLength(1);
+			expect(
+				second.filter((u) => u.sessionUpdate === "usage_update"),
+			).toHaveLength(0);
+		});
+
+		test("honours the context window override", () => {
+			const previous = process.env.AGY_CONTEXT_WINDOW;
+			process.env.AGY_CONTEXT_WINDOW = "200000";
+			try {
+				const translator = new Translator({
+					mode: "replay",
+					skipNarration: false,
+				});
+				const updates = translator.translate([
+					mockUsageStep(4, {
+						inputTokens: 1000,
+						cacheReadTokens: 0,
+						reasoningTokens: 0,
+						visibleOutputTokens: 0,
+					}),
+				]);
+				const usageUpdate = updates.find(
+					(u) => u.sessionUpdate === "usage_update",
+				) as any;
+				expect(usageUpdate.size).toBe(200000);
+				expect(usageUpdate.used).toBe(1000);
+				expect(usageUpdate._meta.agy.windowEstimated).toBe(false);
+			} finally {
+				if (previous === undefined) delete process.env.AGY_CONTEXT_WINDOW;
+				else process.env.AGY_CONTEXT_WINDOW = previous;
+			}
+		});
+
+		test("emits nothing for steps without usage", () => {
+			const translator = new Translator({
+				mode: "stream",
+				skipNarration: false,
+			});
+
+			const updates = translator.translate([
+				mockStep(1, 15, { agentText: { text: "hello" } }),
+			]);
+
+			expect(updates.some((u) => u.sessionUpdate === "usage_update")).toBe(
+				false,
+			);
 		});
 	});
 

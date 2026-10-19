@@ -82,6 +82,7 @@ skipped when `AGY_SKIP_DOWNLOAD=1` or `$AGY_BIN` is set.
 | `AGY_SKIP_DOWNLOAD` | Set to `1` to skip the download entirely |
 | `AGY_EXTRA_ARGS` | Extra args forwarded to every `agy` invocation |
 | `AGY_CONVERSATIONS_DIR` | Custom directory where `agy` writes its conversation SQLite databases |
+| `AGY_CONTEXT_WINDOW` | Context window size in **tokens** reported by `usage_update` (default 1000000). `agy` does not expose the per-model limit, so set this to the selected model's real limit to make the context indicator exact |
 
 ## Build (Single Executable Application)
 

@@ -14,6 +14,7 @@
 // the two modes are just small branches inside it.
 
 import type { SessionUpdate } from "@agentclientprotocol/sdk";
+import { contextWindowIsEstimated, contextWindowTokens } from "../constants";
 import { filterNarration, isNarration } from "../narration";
 import type { StepRow } from "../types";
 import { toolCallId } from "../updates/utils";
@@ -47,6 +48,9 @@ export class Translator {
 	private readonly openToolSteps = new Map<number, string>();
 	// Replay: buffered consecutive agent-text parts, flushed at boundaries.
 	private readonly pendingAgentParts: string[] = [];
+	// Usage already emitted per step, so re-reads of a finished step in stream
+	// mode do not repeat the same notification.
+	private readonly emittedUsage = new Map<number, string>();
 
 	private _lastTitle: string | null = null;
 	private _lastStepIdx = -1;
@@ -80,6 +84,7 @@ export class Translator {
 		switch (row.stepType) {
 			case 15: // agent text chunk
 				this.handleAgentText(row, out);
+				this.handleUsage(row, out);
 				return;
 
 			case 23: // conversation title
@@ -208,6 +213,42 @@ export class Translator {
 		if (this.opts.skipNarration && isNarration(text)) return;
 		const delta = text.slice(emitted);
 		if (delta.length > 0) out.push(agentChunk(delta));
+	}
+
+	/**
+	 * Emit a context-usage notification for a step that reports model usage.
+	 *
+	 * `used` is the prompt size of the latest call (fresh + cached input), which
+	 * is what is in the model's context while the turn runs; the raw buckets
+	 * travel in `_meta` so clients can render exact numbers without relying on
+	 * the window estimate.
+	 */
+	private handleUsage(row: StepRow, out: SessionUpdate[]): void {
+		const usage = row.usage;
+		if (!usage) return;
+		const signature = [
+			usage.inputTokens,
+			usage.cacheReadTokens,
+			usage.reasoningTokens,
+			usage.visibleOutputTokens,
+		].join(":");
+		if (this.emittedUsage.get(row.idx) === signature) return;
+		this.emittedUsage.set(row.idx, signature);
+		out.push({
+			sessionUpdate: "usage_update",
+			used: usage.inputTokens + usage.cacheReadTokens,
+			size: contextWindowTokens(),
+			_meta: {
+				agy: {
+					inputTokens: usage.inputTokens,
+					cacheReadTokens: usage.cacheReadTokens,
+					reasoningTokens: usage.reasoningTokens,
+					visibleOutputTokens: usage.visibleOutputTokens,
+					// Lets a client hide the ratio when the window is the estimate.
+					windowEstimated: contextWindowIsEstimated(),
+				},
+			},
+		} as SessionUpdate);
 	}
 
 	private flushAgentBuffer(out: SessionUpdate[]): void {

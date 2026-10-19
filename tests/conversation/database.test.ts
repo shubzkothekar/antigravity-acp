@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { BinaryWriter } from "@bufbuild/protobuf/wire";
 import {
 	ConversationDb,
 	conversationDbPath,
@@ -161,6 +162,57 @@ describe("conversation/database", () => {
 	test("readRows returns null for missing DB", () => {
 		const rows = readRows(tempDir, "missing-oneshot", 5);
 		expect(rows).toBeNull();
+	});
+
+	test("readAfter maps the usage block onto the row", () => {
+		const dbPath = conversationDbPath(tempDir, "usage");
+		const sqlite = new Database(dbPath);
+		sqlite
+			.query(
+				"CREATE TABLE steps (idx INTEGER, step_type INTEGER, status INTEGER, step_payload BLOB, error_details BLOB, permissions BLOB, task_details BLOB)",
+			)
+			.run();
+
+		// 1: step_type self-check, 5: { 9: { 2: input, 5: cache read, 9: reasoning, 10: visible } }
+		const writer = new BinaryWriter();
+		writer.tag(1, 0).uint32(15);
+		writer.tag(5, 2).fork();
+		writer.tag(9, 2).fork();
+		writer.tag(2, 0).uint32(11751);
+		writer.tag(5, 0).uint32(16609);
+		writer.tag(9, 0).uint32(165);
+		writer.tag(10, 0).uint32(60);
+		writer.join();
+		writer.join();
+		sqlite
+			.query(
+				"INSERT INTO steps (idx, step_type, status, step_payload) VALUES (?, ?, ?, ?)",
+			)
+			.run(1, 15, 3, writer.finish());
+
+		// A step without a usage block leaves the field null.
+		const bare = StepPayload.encode(StepPayload.create({})).finish();
+		sqlite
+			.query(
+				"INSERT INTO steps (idx, step_type, status, step_payload) VALUES (?, ?, ?, ?)",
+			)
+			.run(2, 15, 3, bare);
+		sqlite.close();
+
+		const db = ConversationDb.open(tempDir, "usage");
+		expect(db).not.toBeNull();
+
+		const rows = db!.readAfter(-1);
+		expect(rows.length).toBe(2);
+		expect(rows[0].usage).toEqual({
+			inputTokens: 11751,
+			cacheReadTokens: 16609,
+			reasoningTokens: 165,
+			visibleOutputTokens: 60,
+		});
+		expect(rows[1].usage).toBeNull();
+
+		db!.close();
 	});
 
 	test("Database constructor throwing error returns null", () => {

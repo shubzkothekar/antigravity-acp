@@ -3,6 +3,7 @@ import { BinaryWriter } from "@bufbuild/protobuf/wire";
 import {
 	decodeErrorDetails,
 	decodeErrorMessageStep,
+	decodeModelUsage,
 	decodePermissions,
 	decodeTaskDetails,
 	decodeToolOutput,
@@ -30,6 +31,75 @@ describe("conversation/columns", () => {
 			const writer = new BinaryWriter();
 			writer.tag(1, 0).uint32(17);
 			expect(decodeErrorMessageStep(writer.finish())).toBeNull();
+		});
+	});
+
+	describe("decodeModelUsage", () => {
+		test("decodes the usage buckets from field 5.9", () => {
+			const writer = new BinaryWriter();
+			// 5: { 4: tool call (unrelated), 9: { 2: input, 3: output, 5: cache read, 9: reasoning, 10: visible } }
+			writer.tag(5, 2).fork();
+			writer.tag(4, 2).fork();
+			writer.tag(1, 2).string("call_171167");
+			writer.join();
+			writer.tag(9, 2).fork();
+			writer.tag(2, 0).uint32(11751);
+			writer.tag(3, 0).uint32(225);
+			writer.tag(5, 0).uint32(16609);
+			writer.tag(9, 0).uint32(165);
+			writer.tag(10, 0).uint32(60);
+			writer.join();
+			writer.join();
+
+			const decoded = decodeModelUsage(writer.finish());
+
+			expect(decoded).toEqual({
+				inputTokens: 11751,
+				cacheReadTokens: 16609,
+				reasoningTokens: 165,
+				visibleOutputTokens: 60,
+			});
+		});
+
+		test("treats absent buckets as zero", () => {
+			const writer = new BinaryWriter();
+			writer.tag(5, 2).fork();
+			writer.tag(9, 2).fork();
+			writer.tag(2, 0).uint32(1026);
+			writer.tag(10, 0).uint32(353);
+			writer.join();
+			writer.join();
+
+			const decoded = decodeModelUsage(writer.finish());
+
+			expect(decoded).toEqual({
+				inputTokens: 1026,
+				cacheReadTokens: 0,
+				reasoningTokens: 0,
+				visibleOutputTokens: 353,
+			});
+		});
+
+		test("returns null when the step reports no usage", () => {
+			const writer = new BinaryWriter();
+			writer.tag(1, 0).uint32(15);
+			writer.tag(20, 2).fork();
+			writer.tag(1, 2).string("hello");
+			writer.join();
+
+			expect(decodeModelUsage(writer.finish())).toBeNull();
+			expect(decodeModelUsage(new Uint8Array(0))).toBeNull();
+		});
+
+		test("returns null when every bucket is zero", () => {
+			const writer = new BinaryWriter();
+			writer.tag(5, 2).fork();
+			writer.tag(9, 2).fork();
+			writer.tag(2, 0).uint32(0);
+			writer.join();
+			writer.join();
+
+			expect(decodeModelUsage(writer.finish())).toBeNull();
 		});
 	});
 

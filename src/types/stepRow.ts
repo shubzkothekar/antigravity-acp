@@ -1,5 +1,6 @@
 import type {
 	ErrorDetails,
+	ModelUsage,
 	PermissionInfo,
 	TaskDetails,
 } from "../conversation/columns";
@@ -18,6 +19,8 @@ export type StepRow = {
 	stepPayload: StepPayload;
 	/** Decoded tool execution output (from field 140 of `step_payload`). */
 	toolOutput?: string | null;
+	/** Decoded model usage for this generation (from field 5.9 of `step_payload`). */
+	usage?: ModelUsage | null;
 	/** Decoded `error_details` column, when the step carries an error. */
 	error?: ErrorDetails | null;
 	/** Decoded `permissions` column, when the step requested a permission. */

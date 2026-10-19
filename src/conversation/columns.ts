@@ -182,3 +182,79 @@ export function decodeToolOutput(input: Uint8Array): string | null {
 }
 
 export type { TaskDetails };
+
+/**
+ * Model usage for one agy generation, decoded from the step payload.
+ *
+ * Layout, verified against agy 1.3.5 and Antigravity 2.13.0 databases (the CLI
+ * transcript's own `input_tokens` / `output_tokens` / `cache_read_tokens`
+ * counters match these fields row for row):
+ *   step_payload.5.9.2   fresh (uncached) input tokens
+ *   step_payload.5.9.5   input tokens served from the model's context cache
+ *   step_payload.5.9.9   reasoning (thinking) output tokens
+ *   step_payload.5.9.10  visible output tokens
+ * Field 3 holds the total output (9 + 10), so it is not decoded here.
+ */
+export interface ModelUsage {
+	inputTokens: number;
+	cacheReadTokens: number;
+	reasoningTokens: number;
+	visibleOutputTokens: number;
+}
+
+/** Decode the model usage block, or null when the step reports none. */
+export function decodeModelUsage(input: Uint8Array): ModelUsage | null {
+	if (!input || input.length === 0) return null;
+	try {
+		const r = new BinaryReader(input);
+		while (r.pos < r.len) {
+			const tag = r.uint32();
+			if (tag >>> 3 === 5 && (tag & 7) === 2) {
+				const usage = readLengthDelimited(r.bytes(), 9);
+				if (!usage) continue;
+				const u = new BinaryReader(usage);
+				const decoded: ModelUsage = {
+					inputTokens: 0,
+					cacheReadTokens: 0,
+					reasoningTokens: 0,
+					visibleOutputTokens: 0,
+				};
+				while (u.pos < u.len) {
+					const uTag = u.uint32();
+					if ((uTag & 7) === 0) {
+						const value = u.uint32();
+						switch (uTag >>> 3) {
+							case 2:
+								decoded.inputTokens = value;
+								break;
+							case 5:
+								decoded.cacheReadTokens = value;
+								break;
+							case 9:
+								decoded.reasoningTokens = value;
+								break;
+							case 10:
+								decoded.visibleOutputTokens = value;
+								break;
+						}
+					} else {
+						u.skip(uTag & 7);
+					}
+				}
+				if (
+					decoded.inputTokens ||
+					decoded.cacheReadTokens ||
+					decoded.reasoningTokens ||
+					decoded.visibleOutputTokens
+				) {
+					return decoded;
+				}
+			} else {
+				r.skip(tag & 7);
+			}
+		}
+	} catch {
+		return null;
+	}
+	return null;
+}
