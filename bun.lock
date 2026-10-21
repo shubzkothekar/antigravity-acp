@@ -7,6 +7,7 @@
       "dependencies": {
         "@agentclientprotocol/sdk": "^1.0.0",
         "@bufbuild/protobuf": "^2.12.1",
+        "zod": "^4.0.0",
       },
       "devDependencies": {
         "@biomejs/biome": "^2.5.1",
