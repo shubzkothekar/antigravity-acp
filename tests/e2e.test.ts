@@ -47,7 +47,7 @@ describe("ACP Server E2E", () => {
 		});
 		expect(res).toBeDefined();
 		expect((res as any).agentInfo.version).toBeDefined();
-	});
+	}, 30_000); // also gates server cold-start on fresh CI runners (the default 5s races it)
 
 	test("should list resources", async () => {
 		const res = await connection.connection.sendRequest("resources/list", {});
